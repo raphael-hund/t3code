@@ -845,6 +845,7 @@ it.effect("an MCP pin lands above every existing pin, as a client pin does", () 
     ...McpToolAccessTestkit.liveThreadShell(ThreadId.make(id)),
     pinnedAt: pinned ? pinnedAt : null,
     pinOrderKey,
+    isOrchestratorProject: false,
     mayBeLive: false,
     hasRemoteTasks: false,
   });

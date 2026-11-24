@@ -7,6 +7,7 @@ import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   latestProviderTurnForAttempt,
   withMessageSenderNote,
+  type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ExecutionNode,
@@ -16,6 +17,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   isDeliveredProviderTurn,
+  isListedThreadLineage,
   parseGoalCommand,
   RunId,
   RunAttemptId,
@@ -72,6 +74,7 @@ import {
 } from "./ContextHandoffDelivery.ts";
 import { isProviderCommand, outputInstructions } from "./runOutput.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProjectOrchestrationContext } from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { unsentManualContinuationSource } from "@t3tools/shared/orchestrationV2ManualContinuation";
@@ -91,6 +94,46 @@ import {
   restartCancelledBackgroundWorkNote,
   stoppedDelegatedTasksNote,
 } from "./RestartBackgroundNote.ts";
+
+export const resolveProjectOrchestrationContext = Effect.fn(
+  "ProviderTurnStartService.resolveProjectOrchestrationContext",
+)(function* (
+  thread: OrchestrationV2AppThread,
+  loadThread: (threadId: ThreadId) => Effect.Effect<OrchestrationV2AppThread | null>,
+): Effect.fn.Return<ProjectOrchestrationContext | undefined> {
+  if (isListedThreadLineage(thread.lineage) && thread.orchestratorProject != null) {
+    return {
+      role: "orchestrator",
+      projectTitle: thread.title,
+      goal: thread.orchestratorProject.goal ?? null,
+    };
+  }
+  if (thread.lineage.relationshipToParent !== "subagent") {
+    return undefined;
+  }
+  // Walk subagent parents so a fork of a Project cannot pass Project instructions to its children.
+  let current: OrchestrationV2AppThread = thread;
+  const visited = new Set<ThreadId>([current.id]);
+  while (
+    current.lineage.relationshipToParent === "subagent" &&
+    current.lineage.parentThreadId !== null
+  ) {
+    const parentId = current.lineage.parentThreadId;
+    if (visited.has(parentId)) return undefined;
+    visited.add(parentId);
+    const parent = yield* loadThread(parentId);
+    if (parent === null) return undefined;
+    current = parent;
+  }
+  if (!isListedThreadLineage(current.lineage) || current.orchestratorProject == null) {
+    return undefined;
+  }
+  return {
+    role: "subagent",
+    projectTitle: current.title,
+    goal: current.orchestratorProject.goal ?? null,
+  };
+});
 
 export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStartError>()(
   "ProviderTurnStartError",
@@ -2308,9 +2351,15 @@ export const layer: Layer.Layer<
       const deliverySession = carriesPendingContext
         ? makeDeliverySession(session, startWithHandoffs)
         : session;
+      const projectContext = yield* resolveProjectOrchestrationContext(
+        projection.thread,
+        (threadId) =>
+          projectionStore.getThread(threadId).pipe(Effect.orElseSucceed(() => null)),
+      );
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
+        ...(projectContext === undefined ? {} : { projectContext }),
         providerSessionId,
         session: deliverySession,
         run: runningRun,

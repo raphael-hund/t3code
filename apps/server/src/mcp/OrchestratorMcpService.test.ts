@@ -5398,6 +5398,7 @@ describe("OrchestratorMcpService thread list", () => {
             Effect.succeed(
               shells.map((thread) => ({
                 ...thread,
+                isOrchestratorProject: false,
                 mayBeLive: isLiveSubagentShell(thread),
                 hasRemoteTasks: false,
               })),

@@ -248,4 +248,47 @@ describe("cooperative shell cache encoding", () => {
       expect(yield* encode(stored)).toBe(yield* encodeOriginal(stored));
     }),
   );
+
+  it.effect("round-trips orchestratorProject and sidebarFolderId through cache encoding", () =>
+    Effect.gen(function* () {
+      const decodeStored = Schema.decodeUnknownEffect(
+        Schema.fromJsonString(StoredOrchestrationShellSnapshot),
+      );
+      const orchestratorProject = {
+        goal: "Ship Projects",
+        orderKey: "a0",
+        avatar: { kind: "image" as const, dataUrl: "data:image/png;base64,YQ==" },
+        tasks: [
+          {
+            id: "task-1",
+            title: "Build contracts",
+            status: "done" as const,
+            notes: "Verified",
+            linkedThreadId: THREAD_ID,
+            createdAt: "2026-07-29T12:00:00.000Z",
+            updatedAt: "2026-07-29T12:00:00.000Z",
+          },
+        ],
+      };
+      const withProject = {
+        ...stored,
+        snapshot: {
+          ...SHELL_SNAPSHOT,
+          threads: [
+            {
+              ...SHELL_SNAPSHOT.threads[0]!,
+              orchestratorProject,
+              sidebarFolderId: "clients",
+            },
+          ],
+          archivedThreads: [],
+        },
+      };
+      const encoded = yield* encodeStoredShellSnapshot(withProject);
+      expect(encoded).toBe(yield* encodeOriginal(withProject));
+      const decoded = yield* decodeStored(encoded);
+      expect(decoded.snapshot.threads[0]?.orchestratorProject).toEqual(orchestratorProject);
+      expect(decoded.snapshot.threads[0]?.sidebarFolderId).toBe("clients");
+    }),
+  );
 });

@@ -67,10 +67,78 @@ const T3_CODE_ACP_PLAN_MODE_INSTRUCTIONS = `## T3 Code interaction mode: Plan
 
 Investigate with read-only actions and do not edit files or otherwise execute the implementation. Resolve discoverable facts before asking questions. When the requirements are decision complete, return a concrete implementation plan and do not start implementing it. Treat this mode as active until T3 Code supplies a different interaction-mode instruction.`;
 
+export interface ProjectOrchestrationContext {
+  readonly role: "orchestrator" | "subagent";
+  readonly projectTitle: string;
+  readonly goal: string | null;
+}
+
+// Keep Project sections well under Codex's 4,000-byte per-entry cap even with long titles or goals.
+const MAX_PROJECT_TITLE_BYTES = 200;
+const MAX_PROJECT_GOAL_BYTES = 2_400;
+
+function truncateUtf8Bytes(value: string, maxBytes: number): string {
+  const encoder = new TextEncoder();
+  if (encoder.encode(value).byteLength <= maxBytes) return value;
+  const ellipsis = "…";
+  const ellipsisBytes = encoder.encode(ellipsis).byteLength;
+  const budget = Math.max(0, maxBytes - ellipsisBytes);
+  let bytes = 0;
+  let end = 0;
+  for (const char of value) {
+    const charBytes = encoder.encode(char).byteLength;
+    if (bytes + charBytes > budget) break;
+    bytes += charBytes;
+    end += char.length;
+  }
+  return `${value.slice(0, end)}${ellipsis}`;
+}
+
+function projectContextEqual(
+  left: ProjectOrchestrationContext | undefined,
+  right: ProjectOrchestrationContext | undefined,
+): boolean {
+  return (
+    left?.role === right?.role &&
+    left?.projectTitle === right?.projectTitle &&
+    left?.goal === right?.goal
+  );
+}
+
+export function buildProjectOrchestrationSection(context: ProjectOrchestrationContext): string {
+  const title = truncateUtf8Bytes(context.projectTitle.trim(), MAX_PROJECT_TITLE_BYTES);
+  const goal = truncateUtf8Bytes(context.goal?.trim() ?? "", MAX_PROJECT_GOAL_BYTES);
+  const goalBlock = goal.length > 0 ? `\n\n### Project goal\n${goal}` : "";
+  if (context.role === "orchestrator") {
+    return (
+      [
+        "## T3 Code Project Orchestrator",
+        "",
+        `This thread is the Project orchestrator for "${title}". Run in \`/orchestrate\` mode (follow the \`/orchestrate\` skill if installed):`,
+        '- Coordinate work rather than doing heavy implementation inline: delegate coding, research, testing, and long tasks via `delegate_task` (pass `target.projectId` to delegate into any local folder/repository, with `isolation: "worktree"` for isolated branches).',
+        "- Subagents under this Project may spawn nested subagents via `delegate_task` when helpful.",
+        "- Track milestones and work items with the `project_tasks` MCP tool (`list`, `create`, `update`, `delete`).",
+        "- Keep replies concise and evidence-backed: summarize outcomes, links, and next decisions.",
+      ].join("\n") + goalBlock
+    );
+  }
+  return (
+    [
+      "## T3 Code Project Subagent",
+      "",
+      `You are a delegated subagent working under Project "${title}".`,
+      "- Nested delegation is permitted under this Project (Orchestrator -> Sub-Agent -> Sub-Sub-Agent), overriding the generic no-subagents rule: you may call `delegate_task` for focused subtasks, verification, or cross-model review (including cross-folder with `target.projectId`).",
+      "- You may read or update the owning Project's task list with `project_tasks` when assigned to track work.",
+      "- Execute reversible steps autonomously and return a concise, evidence-backed report.",
+    ].join("\n") + goalBlock
+  );
+}
+
 export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasT3Mcp: boolean;
   readonly hasDeviceTools: boolean;
+  readonly projectContext?: ProjectOrchestrationContext;
 }
 
 /** ACP lacks system/developer fields; inject context on first prompt and tool/mode changes. */
@@ -84,7 +152,8 @@ export function t3AcpPromptWithInstructions(input: {
   if (
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp &&
-    input.previousState.hasDeviceTools === input.state.hasDeviceTools
+    input.previousState.hasDeviceTools === input.state.hasDeviceTools &&
+    projectContextEqual(input.previousState.projectContext, input.state.projectContext)
   ) {
     return input.prompt;
   }
@@ -100,6 +169,9 @@ export function t3AcpPromptWithInstructions(input: {
           T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS,
         ]
       : []),
+    ...(input.state.projectContext === undefined
+      ? []
+      : [buildProjectOrchestrationSection(input.state.projectContext)]),
   ];
   return `<t3_code_instructions>\n${instructions.join("\n\n")}\n</t3_code_instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;
 }
@@ -123,8 +195,18 @@ export function t3OrchestrationPrompt(input: {
   /** Guidance for this provider's own tools, sent until `providerInstructionsDelivered`. */
   readonly providerInstructions?: string;
   readonly providerInstructionsDelivered?: boolean;
+  readonly projectContext?: ProjectOrchestrationContext;
+  readonly projectInstructionsDelivered?: boolean;
 }): string {
-  if (!input.hasT3Mcp) return input.prompt;
+  const projectSection =
+    input.projectContext !== undefined && input.projectInstructionsDelivered !== true
+      ? buildProjectOrchestrationSection(input.projectContext)
+      : undefined;
+  if (!input.hasT3Mcp) {
+    return projectSection === undefined
+      ? input.prompt
+      : prependT3OrchestrationInstructions(input.prompt, projectSection);
+  }
   const instructions = [
     !input.orchestrationDelivered
       ? orchestrationInstructions(input.hasDeviceTools)
@@ -132,6 +214,7 @@ export function t3OrchestrationPrompt(input: {
         ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS
         : undefined,
     input.providerInstructionsDelivered === true ? undefined : input.providerInstructions,
+    projectSection,
   ].flatMap((part) => (part === undefined ? [] : [part.trim()]));
   return instructions.length === 0
     ? input.prompt
@@ -141,6 +224,11 @@ export function t3OrchestrationPrompt(input: {
 export function t3OrchestrationSystemPrompt(
   hasT3Mcp: boolean,
   hasDeviceTools: boolean,
+  projectContext?: ProjectOrchestrationContext,
 ): string | undefined {
-  return hasT3Mcp ? orchestrationInstructions(hasDeviceTools) : undefined;
+  const projectSection =
+    projectContext === undefined ? undefined : buildProjectOrchestrationSection(projectContext);
+  if (!hasT3Mcp) return projectSection;
+  const base = orchestrationInstructions(hasDeviceTools);
+  return projectSection === undefined ? base : `${base}\n${projectSection}\n`;
 }

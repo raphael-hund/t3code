@@ -78,7 +78,7 @@ export function buildDraftActionMenuItems(
       ? [
           {
             id: "project-settings" as const,
-            label: resolve(msg("Project settings")),
+            label: resolve(msg("Folder settings")),
             icon: "settings",
           },
         ]
@@ -232,7 +232,7 @@ export function buildThreadActionMenuItems(
           {
             id: "filter-by-project" as const,
             label: state.projectFilter.isActive
-              ? resolve(msg("Show all projects"))
+              ? resolve(msg("Show all folders"))
               : resolve(msg("Filter by {project}", { project: state.projectFilter.label })),
             icon: "folder-tree",
           },
@@ -297,7 +297,7 @@ export function buildThreadActionMenuItems(
         { id: "copy-thread-id", label: resolve(msg("Thread ID")), icon: "hash" },
       ],
     },
-    { id: "project-settings", label: resolve(msg("Project settings")), icon: "settings" },
+    { id: "project-settings", label: resolve(msg("Folder settings")), icon: "settings" },
     {
       id: "archive",
       label: resolve(msg("Archive thread")),

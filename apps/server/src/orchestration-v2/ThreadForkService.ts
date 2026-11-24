@@ -100,14 +100,21 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         });
       }
       // The remote parent delegated the source thread, not its forks.
-      // Nor is a fork a step of the run its source was one of.
+      // Nor is a fork a step of the run its source was one of, nor a second Project.
       const {
         delegatedFrom: _delegatedFrom,
         workflowRun: _workflowRun,
+        orchestratorProject: _orchestratorProject,
+        sidebarFolderId,
         ...inherited
       } = input.sourceProjection.thread;
       const targetThread: OrchestrationV2AppThread = {
         ...inherited,
+        ...(input.sideChat ||
+        input.sourceProjection.thread.orchestratorProject != null ||
+        sidebarFolderId == null
+          ? {}
+          : { sidebarFolderId }),
         // PR context follows the conversation; watching remains the source thread's responsibility.
         pullRequests: input.sourceProjection.thread.pullRequests?.map(
           ({ watch: _watch, ...link }) => link,

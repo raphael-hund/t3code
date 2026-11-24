@@ -41,6 +41,8 @@ import {
   OrchestrationV2DelegatedFrom,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
+  OrchestratorProjectTask,
+  OrchestratorProjectTaskStatus,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -122,7 +124,7 @@ export const OrchestratorMcpTarget = Schema.Struct({
   projectId: Schema.optional(
     ProjectId.annotate({
       description:
-        "With `environmentId`: its project to run in. Default: the one with this project's repository.",
+        "Project to run in (local or on `environmentId`). Omit to inherit this thread's project.",
     }),
   ),
 });
@@ -983,6 +985,50 @@ export const OrchestratorMcpDeleteScheduledTaskResult = Schema.Struct({
 });
 export type OrchestratorMcpDeleteScheduledTaskResult =
   typeof OrchestratorMcpDeleteScheduledTaskResult.Type;
+
+export const OrchestratorMcpProjectTasksAction = Schema.Literals([
+  "list",
+  "create",
+  "update",
+  "delete",
+]);
+export type OrchestratorMcpProjectTasksAction = typeof OrchestratorMcpProjectTasksAction.Type;
+
+export const OrchestratorMcpProjectTasksInput = Schema.Struct({
+  action: OrchestratorMcpProjectTasksAction,
+  taskId: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description: "Task id. Required for `update` and `delete`.",
+    }),
+  ),
+  title: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(256)).annotate({
+      description: "Task title. Required for `create`.",
+    }),
+  ),
+  status: Schema.optional(OrchestratorProjectTaskStatus),
+  notes: Schema.optional(
+    Schema.NullOr(Schema.String.check(Schema.isMaxLength(4_000))).annotate({
+      description: "Optional notes; pass null on `update` to clear.",
+    }),
+  ),
+  linkedThreadId: Schema.optional(
+    Schema.NullOr(ThreadId).annotate({
+      description: "Optional linked thread id; pass null on `update` to clear.",
+    }),
+  ),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpProjectTasksInput = typeof OrchestratorMcpProjectTasksInput.Type;
+
+export const OrchestratorMcpProjectTasksResult = Schema.Struct({
+  projectThreadId: ThreadId,
+  action: OrchestratorMcpProjectTasksAction,
+  task: Schema.optional(Schema.NullOr(OrchestratorProjectTask)),
+  deletedTaskId: Schema.optional(TrimmedNonEmptyString),
+  tasks: Schema.Array(OrchestratorProjectTask),
+});
+export type OrchestratorMcpProjectTasksResult = typeof OrchestratorMcpProjectTasksResult.Type;
 
 export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFailure>()(
   "OrchestratorMcpFailure",

@@ -13,7 +13,11 @@ import {
   runRanAfter,
   usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
-import { threadIssueKeysEqual } from "@t3tools/contracts";
+import {
+  isDelegatedAppThread,
+  isListedThreadLineage,
+  threadIssueKeysEqual,
+} from "@t3tools/contracts";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import {
@@ -821,6 +825,23 @@ function askedForLinkedMachine(
   const normalize = (text: string | undefined) => text?.trim().toLowerCase() ?? "";
   const hint = normalize(card.hint);
   return hint !== "" && hint === normalize(linked.hint) && hint === normalize(linked.linkedLabel);
+}
+
+function isSidebarPlacementOnlyUpdate(
+  command: Extract<OrchestrationV2Command, { readonly type: "thread.metadata.update" }>,
+): boolean {
+  const {
+    type: _type,
+    commandId: _commandId,
+    threadId: _threadId,
+    orchestratorProject,
+    sidebarFolderId,
+    ...rest
+  } = command;
+  return (
+    (orchestratorProject !== undefined || sidebarFolderId !== undefined) &&
+    Object.values(rest).every((value) => value === undefined)
+  );
 }
 
 // A workspace change detaches the session, which can settle the calling run at once. Queuing its
@@ -4132,6 +4153,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       interactionMode: command.interactionMode,
       branch: command.branch,
       worktreePath: command.worktreePath,
+      ...(command.orchestratorProject == null ||
+      command.workflowRun !== undefined ||
+      command.delegatedFrom !== undefined
+        ? {}
+        : { orchestratorProject: command.orchestratorProject }),
+      ...(command.sidebarFolderId == null ||
+      command.workflowRun !== undefined ||
+      command.delegatedFrom !== undefined
+        ? {}
+        : { sidebarFolderId: command.sidebarFolderId }),
       activeProviderThreadId: null,
       pullRequests: [],
       ...(command.linkOrigin === undefined ? {} : { linkOrigin: command.linkOrigin }),
@@ -4578,6 +4609,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} branch changed before the metadata update could be applied.`,
+      });
+    }
+    // A Project is a sidebar row; subagents, side chats, workflow steps, and delegated tasks have none.
+    if (
+      command.type === "thread.metadata.update" &&
+      command.orchestratorProject != null &&
+      (!isListedThreadLineage(thread.lineage) || isDelegatedAppThread(thread))
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is not a top-level thread and cannot become a Project.`,
       });
     }
     if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {
@@ -5233,6 +5276,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
+            ...(command.orchestratorProject === undefined
+              ? {}
+              : { orchestratorProject: command.orchestratorProject }),
+            ...(command.sidebarFolderId === undefined
+              ? {}
+              : { sidebarFolderId: command.sidebarFolderId }),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {
@@ -5265,7 +5314,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : command.regenerateTitle === false || command.title !== undefined
                 ? { titleRegeneration: null }
                 : {}),
-            updatedAt: now,
+            // Arranging the sidebar is not activity, like reordering.
+            updatedAt: isSidebarPlacementOnlyUpdate(command) ? thread.updatedAt : now,
           };
         }
         case "thread.pull-request.link":
@@ -10123,6 +10173,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.title === undefined ? {} : { title: command.title }),
         ordinal: (yield* subagentCount(command.parentThreadId)) + 1,
       });
+      const isCrossProject =
+        command.targetProjectId !== undefined &&
+        command.targetProjectId !== parentProjection.thread.projectId;
       const childThread: OrchestrationV2AppThread = {
         ...makeSubagentChildThread({
           parentThread: parentProjection.thread,
@@ -10136,6 +10189,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           createdBy: command.createdBy,
           creationSource: command.creationSource,
         }),
+        ...(isCrossProject
+          ? { projectId: command.targetProjectId, branch: null, worktreePath: null }
+          : {}),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
         ...(command.workspaceStrategy === undefined ? {} : { branch: null, worktreePath: null }),

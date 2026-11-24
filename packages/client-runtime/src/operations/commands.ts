@@ -15,6 +15,7 @@ import {
   type NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2CreationSource,
+  type OrchestratorProjectConfig,
   type PlanId,
   type ProjectId,
   type ProjectIconOverride,
@@ -99,6 +100,9 @@ export interface CreateThreadInput extends CommandMetadata {
   readonly interactionMode: ProviderInteractionMode;
   readonly branch: string | null;
   readonly worktreePath: string | null;
+  /** Creates the thread as a sidebar Project. */
+  readonly orchestratorProject?: OrchestratorProjectConfig;
+  readonly sidebarFolderId?: string;
 }
 
 export interface ThreadCommandInput extends CommandMetadata {
@@ -157,6 +161,10 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly regenerateTitle?: boolean;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly expectedEmpty?: boolean;
+  /** Promote or edit (object), demote (null). */
+  readonly orchestratorProject?: OrchestratorProjectConfig | null;
+  /** Move into a sidebar group, or out of it with null. */
+  readonly sidebarFolderId?: string | null;
 }
 
 export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
@@ -514,6 +522,10 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
     interactionMode: input.interactionMode,
     branch: input.branch,
     worktreePath: input.worktreePath,
+    ...(input.orchestratorProject === undefined
+      ? {}
+      : { orchestratorProject: input.orchestratorProject }),
+    ...(input.sidebarFolderId === undefined ? {} : { sidebarFolderId: input.sidebarFolderId }),
   });
 });
 
@@ -724,7 +736,9 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
       input.worktreePath !== undefined ||
       input.regenerateTitle !== undefined ||
       input.linkedPullRequest !== undefined ||
-      input.limitRecovery !== undefined
+      input.limitRecovery !== undefined ||
+      input.orchestratorProject !== undefined ||
+      input.sidebarFolderId !== undefined
     ) {
       result = yield* dispatch({
         type: "thread.metadata.update",
@@ -739,6 +753,10 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
         ...(input.linkedPullRequest === undefined
           ? {}
           : { linkedPullRequest: input.linkedPullRequest }),
+        ...(input.orchestratorProject === undefined
+          ? {}
+          : { orchestratorProject: input.orchestratorProject }),
+        ...(input.sidebarFolderId === undefined ? {} : { sidebarFolderId: input.sidebarFolderId }),
       });
     }
     if (input.modelSelection !== undefined) {
