@@ -106,10 +106,10 @@ export function SidebarThreadHeader({
                 <span>{newThreadLabel}</span>
                 <span className="text-muted-foreground">
                   {newThreadInProjectShortcutLabel
-                    ? gt("New thread in current project: Shift+click ({shortcut})", {
+                    ? gt("New thread in current folder: Shift+click ({shortcut})", {
                         shortcut: newThreadInProjectShortcutLabel,
                       })
-                    : gt("New thread in current project: Shift+click")}
+                    : gt("New thread in current folder: Shift+click")}
                 </span>
               </span>
             ) : (

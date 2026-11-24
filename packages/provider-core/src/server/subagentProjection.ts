@@ -62,8 +62,14 @@ export function makeSubagentChildThread(input: {
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }): OrchestrationV2AppThread {
-  // The remote parent delegated the parent thread, not its subagents.
-  const { delegatedFrom: _delegatedFrom, ...inherited } = input.parentThread;
+  // The remote parent delegated the parent thread, not its subagents. A Project's children sit in
+  // its tree, never as Projects or folder members themselves.
+  const {
+    delegatedFrom: _delegatedFrom,
+    orchestratorProject: _orchestratorProject,
+    sidebarFolderId: _sidebarFolderId,
+    ...inherited
+  } = input.parentThread;
   return {
     ...inherited,
     createdBy: input.createdBy,

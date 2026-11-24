@@ -144,6 +144,8 @@ it.effect("resets a fork's pin, snooze, settle and delegation state but keeps it
       pinOrderKey: "a0",
       activeOrderKey: "a1",
       autoSettleDisabledAt: snoozedAt,
+      orchestratorProject: { goal: "Ship slice 1" },
+      sidebarFolderId: "clients",
       delegatedFrom: {
         environmentId: EnvironmentId.make("linked-environment"),
         threadId: ThreadId.make("linked-parent"),
@@ -166,6 +168,8 @@ it.effect("resets a fork's pin, snooze, settle and delegation state but keeps it
     assert.isNull(result.targetThread.pinOrderKey);
     assert.isNull(result.targetThread.activeOrderKey);
     assert.isNull(result.targetThread.autoSettleDisabledAt);
+    assert.isUndefined(result.targetThread.orchestratorProject);
+    assert.isUndefined(result.targetThread.sidebarFolderId);
     assert.isUndefined(result.targetThread.delegatedFrom);
     assert.equal(result.targetThread.historyOrigin, "v1_import");
     assert.deepEqual(result.targetThread.linkOrigin, linkOrigin);

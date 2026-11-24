@@ -574,3 +574,69 @@ describe("sidebar settled pagination", () => {
     expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
   });
 });
+
+describe("sidebar thread row details", () => {
+  it.each([
+    { mode: "normal", boring: false },
+    { mode: "boring", boring: true },
+  ])("$mode sidebar rows leave branch and pull request to the hover card", async ({ boring }) => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, boringSidebarEnabled: boring });
+    const activeProject = project("active");
+    const thread = makeThreadFixture({
+      environmentId: activeProject.environmentId,
+      id: ThreadId.make("thread-with-pr"),
+      projectId: activeProject.id,
+      title: "Ship the release",
+      branch: "feature/release-notes",
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: "acme/demo-repo",
+          number: 4321,
+          url: "https://github.com/acme/demo-repo/pull/4321",
+          source: "manual",
+          linkedAt: "2026-01-01T00:00:00.000Z",
+          snapshot: null,
+          stack: null,
+        },
+      ],
+    });
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue(null);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    vi.mocked(useServerConfigs).mockReturnValue(
+      new Map([
+        [
+          activeProject.environmentId,
+          {
+            scratchWorkspaceRoot: null,
+            shellThreadFamilies: false,
+          } as unknown as EnvironmentServerConfig,
+        ],
+      ]),
+    );
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    await expect.element(screen.getByText("Ship the release").first()).toBeInTheDocument();
+    const row = screen.container.querySelector<HTMLElement>("[data-thread-item]")!;
+    expect(row.querySelector("[data-provider-accent-color]")).toBeNull();
+    expect(row.textContent).not.toContain("4321");
+    expect(row.textContent).not.toContain("feature/release-notes");
+  });
+});

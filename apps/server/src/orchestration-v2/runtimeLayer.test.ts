@@ -3804,6 +3804,123 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         DateTime.toEpochMillis(untaggedShell.updatedAt),
       );
 
+      // Sidebar Project promotion, edits, folder moves, and demotion preserve updatedAt.
+      const createdProjectId = ThreadId.make("runtime-layer-lifecycle-project");
+      const initialProjectConfig = {
+        goal: "Ship Slice 1",
+        orderKey: "a0",
+        avatar: { kind: "image" as const, dataUrl: "data:image/png;base64,YQ==" },
+        tasks: [
+          {
+            id: "task-1",
+            title: "Verify contracts",
+            status: "todo" as const,
+            createdAt: "2026-09-07T00:00:00.000Z",
+            updatedAt: "2026-09-07T00:00:00.000Z",
+          },
+        ],
+      };
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-lifecycle-create-project"),
+        threadId: createdProjectId,
+        projectId,
+        title: "Projects Initiative",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        orchestratorProject: initialProjectConfig,
+        sidebarFolderId: "clients",
+      });
+      const createdProjectShell = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (thread) => thread.id === createdProjectId,
+      );
+      assert.deepEqual(createdProjectShell?.orchestratorProject, initialProjectConfig);
+      assert.equal(createdProjectShell?.sidebarFolderId, "clients");
+
+      yield* TestClock.adjust("1 minute");
+      const updatedProjectConfig = {
+        ...initialProjectConfig,
+        goal: "Ship Slice 1 + 2",
+        avatar: { kind: "emoji" as const, emoji: "🚀" },
+        tasks: [
+          {
+            ...initialProjectConfig.tasks[0]!,
+            status: "done" as const,
+            notes: "Green",
+            updatedAt: "2026-09-07T00:05:00.000Z",
+          },
+        ],
+      };
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-lifecycle-promote"),
+        threadId,
+        orchestratorProject: updatedProjectConfig,
+        sidebarFolderId: "clients",
+      });
+      const promotedShell = shellOf(yield* orchestrator.getShellSnapshot());
+      assert.deepEqual(promotedShell.orchestratorProject, updatedProjectConfig);
+      assert.equal(promotedShell.sidebarFolderId, "clients");
+      assert.equal(
+        DateTime.toEpochMillis(promotedShell.updatedAt),
+        DateTime.toEpochMillis(taggedShell.updatedAt),
+      );
+
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-lifecycle-demote"),
+        threadId,
+        orchestratorProject: null,
+        sidebarFolderId: null,
+      });
+      const demotedShell = shellOf(yield* orchestrator.getShellSnapshot());
+      assert.isNull(demotedShell.orchestratorProject);
+      assert.isNull(demotedShell.sidebarFolderId);
+      assert.equal(
+        DateTime.toEpochMillis(demotedShell.updatedAt),
+        DateTime.toEpochMillis(taggedShell.updatedAt),
+      );
+
+      // Subagent threads cannot be promoted to Projects.
+      const events = yield* EventSink.EventSinkV2;
+      const subagentId = ThreadId.make("runtime-layer-lifecycle-subagent");
+      const subagentNow = yield* DateTime.now;
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make("runtime-layer-lifecycle-subagent-created"),
+            type: "thread.created",
+            threadId: subagentId,
+            occurredAt: subagentNow,
+            payload: {
+              ...(yield* orchestrator.getThreadProjection(createdProjectId)).thread,
+              id: subagentId,
+              orchestratorProject: null,
+              sidebarFolderId: null,
+              lineage: {
+                parentThreadId: createdProjectId,
+                relationshipToParent: "subagent",
+                rootThreadId: createdProjectId,
+              },
+            },
+          },
+        ],
+      });
+      const promotedSubagent = yield* orchestrator
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("runtime-layer-lifecycle-promote-subagent"),
+          threadId: subagentId,
+          orchestratorProject: { goal: "Should fail" },
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(promotedSubagent, Orchestrator.OrchestratorDispatchError);
+
       const preAutoProjection = yield* orchestrator.getThreadProjection(threadId);
       const staleAutoSettle = yield* orchestrator
         .dispatch({

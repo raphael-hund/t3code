@@ -5,6 +5,11 @@ import * as Schema from "effect/Schema";
 import {
   EnvironmentId,
   NodeId,
+  OrchestrationV2AppThreadJson,
+  OrchestratorProjectAvatar,
+  OrchestratorProjectConfig,
+  OrchestratorProjectTask,
+  OrchestratorProjectTaskStatus,
   RunAttemptId,
   RunId,
   ScheduledTaskId,
@@ -45,8 +50,114 @@ const decodeOrchestrationV2ProviderThread = Schema.decodeUnknownSync(Orchestrati
 const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
   OrchestrationV2ProviderCapabilities,
 );
+const decodeOrchestratorProjectConfig = Schema.decodeUnknownSync(OrchestratorProjectConfig);
+const encodeOrchestratorProjectConfig = Schema.encodeSync(OrchestratorProjectConfig);
+const decodeOrchestratorProjectAvatar = Schema.decodeUnknownSync(OrchestratorProjectAvatar);
+const decodeOrchestratorProjectTask = Schema.decodeUnknownSync(OrchestratorProjectTask);
+const decodeOrchestratorProjectTaskStatus = Schema.decodeUnknownSync(OrchestratorProjectTaskStatus);
+const decodeOrchestrationV2AppThreadJson = Schema.decodeUnknownSync(OrchestrationV2AppThreadJson);
+const decodeOrchestrationV2ThreadShellJson = Schema.decodeUnknownSync(
+  OrchestrationV2ThreadShellJson,
+);
 
 describe("orchestration V2 contracts", () => {
+  it("round trips project data, decodes legacy threads, and rejects invalid image avatars", () => {
+    expect(decodeOrchestratorProjectConfig({})).toEqual({});
+    expect(
+      decodeOrchestratorProjectAvatar({ kind: "lucide", name: "folder-git-2", color: "blue" }),
+    ).toEqual({
+      kind: "lucide",
+      name: "folder-git-2",
+      color: "blue",
+    });
+    expect(decodeOrchestratorProjectAvatar({ kind: "emoji", emoji: "🚀" })).toEqual({
+      kind: "emoji",
+      emoji: "🚀",
+    });
+    expect(
+      decodeOrchestratorProjectAvatar({ kind: "monogram", text: "MK", color: "emerald" }),
+    ).toEqual({
+      kind: "monogram",
+      text: "MK",
+      color: "emerald",
+    });
+    for (const status of ["todo", "in_progress", "done"] as const) {
+      expect(decodeOrchestratorProjectTaskStatus(status)).toBe(status);
+    }
+    const project = {
+      goal: "Ship it",
+      orderKey: "a0",
+      avatar: { kind: "image", dataUrl: "data:image/png;base64,YQ==" },
+      tasks: [
+        {
+          id: "task",
+          title: "Build",
+          status: "in_progress",
+          notes: "Keep it lean",
+          linkedThreadId: "thread-child-1",
+          createdAt: "2026-04-20T00:00:00.000Z",
+          updatedAt: "2026-04-20T00:00:00.000Z",
+        },
+      ],
+    };
+    expect(encodeOrchestratorProjectConfig(decodeOrchestratorProjectConfig(project))).toEqual(
+      project,
+    );
+    expect(decodeOrchestratorProjectTask(project.tasks[0])).toEqual(project.tasks[0]);
+    for (const badDataUrl of [
+      "data:image/svg+xml;base64,YQ==",
+      "https://example.com/avatar.png",
+      "data:image/png;base64,not valid!",
+      `data:image/png;base64,${"A".repeat(131072)}`,
+    ]) {
+      expect(() =>
+        decodeOrchestratorProjectConfig({ avatar: { kind: "image", dataUrl: badDataUrl } }),
+      ).toThrow();
+    }
+
+    const legacyThread = {
+      createdBy: "user",
+      creationSource: "web",
+      id: "thread-legacy",
+      projectId: "project-1",
+      title: "Legacy",
+      providerInstanceId: "codex",
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { rootThreadId: "thread-legacy", parentThreadId: null, relationshipToParent: null },
+      forkedFrom: null,
+      createdAt: "2026-04-20T00:00:00.000Z",
+      updatedAt: "2026-04-20T00:00:00.000Z",
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    };
+    const decodedLegacyThread = decodeOrchestrationV2AppThreadJson(legacyThread);
+    expect(decodedLegacyThread.orchestratorProject).toBeUndefined();
+    expect(decodedLegacyThread.sidebarFolderId).toBeUndefined();
+
+    const decodedLegacyShell = decodeOrchestrationV2ThreadShellJson({
+      ...legacyThread,
+      latestRunId: null,
+      activeRunId: null,
+      status: "idle",
+      pendingRuntimeRequest: null,
+      latestVisibleMessage: null,
+      latestUserMessageAt: null,
+      hasActionableProposedPlan: false,
+      itemCount: 0,
+      visibleItemCount: 0,
+    });
+    expect(decodedLegacyShell.orchestratorProject).toBeUndefined();
+    expect(decodedLegacyShell.sidebarFolderId).toBeUndefined();
+  });
+
   it("decodes thread event types from a newer server as skippable items", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),

@@ -1,3 +1,5 @@
+> **PAUSIERT (24.11.2026, Raphael).** Der Umbau dieses T3-Forks für das Cockpit ist eingefroren, bis der Plan für das Cockpit fertig ist. Nichts weiterbauen, nichts committen, nichts verwerfen. Gesicherter Stand: /var/lib/raphael-setup/vps-aufraeumen-20261124/t3code-fork.
+
 <p align="center">
   <a href="https://t3.codes">
     <img src="./assets/prod/t3-black-web-icon-192x192.png" width="80" height="80" alt="T3 Code logo" />
