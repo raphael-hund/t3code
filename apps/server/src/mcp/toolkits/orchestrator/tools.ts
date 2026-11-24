@@ -19,6 +19,8 @@ import {
   OrchestratorMcpFailure,
   OrchestratorMcpListScheduledTasksInput,
   OrchestratorMcpListScheduledTasksResult,
+  OrchestratorMcpProjectTasksInput,
+  OrchestratorMcpProjectTasksResult,
   OrchestratorMcpSaveScheduledTaskInput,
   OrchestratorMcpScheduleTaskResult,
   OrchestratorMcpTaskCancelInput,
@@ -362,11 +364,25 @@ const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
   .annotate(Tool.Idempotent, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
 
+const ProjectTasksTool = Tool.make("project_tasks", {
+  description:
+    "Manage the owning Project's task list (`list`, `create`, `update`, `delete`). Works from the Project orchestrator or any delegated subagent under it.",
+  parameters: OrchestratorMcpProjectTasksInput,
+  success: OrchestratorMcpProjectTasksResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Manage Project tasks")
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
   TaskStatusTool,
   TaskCancelTool,
+  ProjectTasksTool,
   WorkflowStopTool,
   BackgroundWaitTool,
   ScheduleTaskTool,

@@ -47,6 +47,7 @@ import type {
   ProviderSelectionTransitionInput,
   ProviderSelectionTransitionPlan,
 } from "./selectionTransition.ts";
+import type { ProjectOrchestrationContext } from "./orchestrationInstructions.ts";
 
 /** The folders of a multi-folder thread besides `cwd`. Single-folder threads omit it. */
 export const ProviderAdapterV2RuntimeWorkspace = Schema.Struct({
@@ -605,6 +606,7 @@ export interface ProviderAdapterV2TurnInput {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  readonly projectContext?: ProjectOrchestrationContext;
 }
 
 export type ProviderAdapterV2ResumeTurnInput = Omit<

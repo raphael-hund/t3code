@@ -41,6 +41,23 @@ const handlers = {
       return yield* service.cancelTask(scope, input);
     }),
   ),
+  project_tasks: McpToolAccess.either(
+    (input) => input.action === "list",
+    McpToolAccess.readsAsCaller((input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.projectTasks(scope, input);
+      }),
+    ),
+    McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.projectTasks(scope, input);
+      }),
+    ),
+  ),
   t3_workflow_stop: McpToolAccess.writesThreads(
     (input) => [input.threadId],
     (input) =>

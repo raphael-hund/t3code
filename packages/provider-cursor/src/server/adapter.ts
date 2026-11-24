@@ -60,7 +60,10 @@ import {
   rewriteCursorSkillMentions,
 } from "./skills.ts";
 import { cursorWorkspaceMcpServers } from "./workspaceMcpServers.ts";
-import { t3OrchestrationPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  buildProjectOrchestrationSection,
+  t3OrchestrationPrompt,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -1104,6 +1107,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly device: boolean;
           readonly backgroundWait: boolean;
           readonly runtime: string | undefined;
+          readonly project: string | undefined;
         } | null>(null);
         // Cursor drops a run cancelled before its first checkpoint, so the next message carries its prompt.
         const interruptedPrompt = yield* Ref.make<{
@@ -2486,6 +2490,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   device: false,
                   backgroundWait: false,
                   runtime: undefined,
+                  project: undefined,
                 });
                 yield* Ref.update(interruptedPrompt, (current) =>
                   current?.agent === context.run.agentId
@@ -2872,6 +2877,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             readonly device: boolean;
             readonly backgroundWait: boolean;
             readonly runtime: string | undefined;
+            readonly project: string | undefined;
           },
           interrupted: string | undefined,
         ) {
@@ -2879,6 +2885,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
             return { message: "/compress", prompt: undefined, runtimeInstructions: undefined };
           }
+          const projectSection =
+            turnInput.projectContext === undefined
+              ? undefined
+              : buildProjectOrchestrationSection(turnInput.projectContext);
           const newText = t3OrchestrationPrompt({
             prompt: yield* providerMessageTextWithAttachmentPaths({
               text: yield* resolveCursorSkillText(
@@ -2895,6 +2905,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             deviceInstructionsDelivered: delivered.device,
             providerInstructions: CURSOR_BACKGROUND_WAIT_INSTRUCTIONS,
             providerInstructionsDelivered: delivered.backgroundWait,
+            ...(turnInput.projectContext === undefined
+              ? {}
+              : {
+                  projectContext: turnInput.projectContext,
+                  projectInstructionsDelivered: delivered.project === projectSection,
+                }),
           });
           const userText =
             interrupted === undefined
@@ -2988,6 +3004,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     device: false,
                     backgroundWait: false,
                     runtime: undefined,
+                    project: undefined,
                   };
             const interrupted = yield* Ref.get(interruptedPrompt);
             const runCheckpointed = (runId?: string) =>
@@ -3086,6 +3103,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               );
             // A resume sends no new instructions, and a native one still continues the stopped request.
             if (resume === undefined) {
+              const projectSection =
+                turnInput.projectContext === undefined
+                  ? undefined
+                  : buildProjectOrchestrationSection(turnInput.projectContext);
               yield* Ref.set(told, {
                 agent: agent.nativeThreadId,
                 orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
@@ -3093,6 +3114,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 backgroundWait:
                   !compacted && (delivered.backgroundWait || mcpServers !== undefined),
                 runtime: compacted ? undefined : delivered.runtime,
+                project: compacted ? undefined : projectSection,
               });
             }
             if (!compacted && resume !== "native") {
@@ -3602,6 +3624,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     device: false,
                     backgroundWait: false,
                     runtime: undefined,
+                    project: undefined,
                   }),
                   Ref.set(interruptedPrompt, null),
                   Ref.set(resumedAgent, null),

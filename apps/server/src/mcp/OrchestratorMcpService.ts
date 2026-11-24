@@ -14,6 +14,8 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type OrchestrationV2TurnItem,
+  type OrchestratorProjectConfig,
+  type OrchestratorProjectTask,
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesInput,
   type OrchestratorMcpCapabilitiesResult,
@@ -24,6 +26,8 @@ import {
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpDeleteScheduledTaskInput,
+  type OrchestratorMcpProjectTasksInput,
+  type OrchestratorMcpProjectTasksResult,
   type OrchestratorMcpRequestSecretInput,
   type OrchestratorMcpRequestSecretResult,
   type OrchestratorMcpDeleteScheduledTaskResult,
@@ -62,6 +66,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   ThreadId,
+  isListedThreadLineage,
   isOrchestrationV2WorkActive,
   latestProviderTurnForAttempt,
   resolveProjectProviderInstanceEnabled,
@@ -88,6 +93,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -238,6 +244,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadInterruptInput,
   ) => Effect.Effect<OrchestratorMcpThreadInterruptResult, OrchestratorMcpFailure>;
+  readonly projectTasks: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpProjectTasksInput,
+  ) => Effect.Effect<OrchestratorMcpProjectTasksResult, OrchestratorMcpFailure>;
 }
 
 export class OrchestratorMcpService extends Context.Service<
@@ -1378,6 +1388,18 @@ const make = Effect.gen(function* () {
     return selection;
   });
   const secretRequests = yield* SecretRequests.SecretRequests;
+  const projectTaskLocks = new Map<ThreadId, Semaphore.Semaphore>();
+  const withProjectTaskLock = <A, E, R>(
+    projectThreadId: ThreadId,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> => {
+    let lock = projectTaskLocks.get(projectThreadId);
+    if (lock === undefined) {
+      lock = Semaphore.makeUnsafe(1);
+      projectTaskLocks.set(projectThreadId, lock);
+    }
+    return lock.withPermits(1)(effect);
+  };
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
@@ -1686,11 +1708,13 @@ const make = Effect.gen(function* () {
 
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly projectId?: ProjectId;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
+    const effectiveProjectId = input.projectId ?? input.parent.thread.projectId;
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
@@ -1722,7 +1746,7 @@ const make = Effect.gen(function* () {
         const enabledForProject =
           input.skipProjectEnablementFilter === true ||
           (yield* threadManagement.isProviderInstanceEnabledForProject({
-            projectId: input.parent.thread.projectId,
+            projectId: effectiveProjectId,
             instanceId: candidate.instanceId,
           }));
         if (enabledForProject) {
@@ -2915,15 +2939,9 @@ const make = Effect.gen(function* () {
           : readTask(scope, taskId, false, true);
       }
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
-      if (
-        input.target?.projectId !== undefined &&
-        input.target.projectId !== parent.thread.projectId
-      ) {
-        return yield* failure(
-          "invalid_request",
-          "A local task runs in this thread's project. Omit target.projectId, or pass target.environmentId to run it in that environment's project.",
-        );
-      }
+      const targetProjectId = input.target?.projectId ?? parent.thread.projectId;
+      const isCrossProject = targetProjectId !== parent.thread.projectId;
+      const targetProject = isCrossProject ? yield* requireProject(targetProjectId) : undefined;
       const parentRun =
         ThreadManagementService.latestActiveRun(parent) ??
         (yield* backgroundSubagentRun(scope, parent.thread.id));
@@ -2947,9 +2965,10 @@ const make = Effect.gen(function* () {
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
       const target = yield* resolveTargetRechecking({
         parent,
+        projectId: targetProjectId,
         target: input.target,
         providers,
-        cwd: yield* parentWorkspaceCwd(parent),
+        cwd: targetProject !== undefined ? targetProject.workspaceRoot : yield* parentWorkspaceCwd(parent),
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
       const runtimeMode = yield* resolveRuntimeMode(
@@ -2963,21 +2982,28 @@ const make = Effect.gen(function* () {
       );
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
       if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
-        const project = yield* requireProject(parent.thread.projectId);
+        const project = targetProject ?? (yield* requireProject(targetProjectId));
         const base = yield* gitDriver
           .resolveCommit({
-            cwd: parent.thread.worktreePath ?? project.workspaceRoot,
+            cwd: isCrossProject
+              ? project.workspaceRoot
+              : (parent.thread.worktreePath ?? project.workspaceRoot),
             revision: "HEAD",
           })
           .pipe(
             Effect.mapError(() =>
-              failure("invalid_request", "Unable to resolve the parent checkout commit."),
+              failure(
+                "invalid_request",
+                isCrossProject
+                  ? `Unable to resolve HEAD in target project "${project.title}" (${project.workspaceRoot}).`
+                  : "Unable to resolve the parent checkout commit.",
+              ),
             ),
           );
         // Launch preparation creates the worktree from the project root, so a
         // parent checkout in another repository (such as a Git folder inside
         // Scratch) would hand it a commit it cannot find.
-        if (parent.thread.worktreePath !== null) {
+        if (!isCrossProject && parent.thread.worktreePath !== null) {
           yield* gitDriver
             .resolveCommit({ cwd: project.workspaceRoot, revision: base.commitSha })
             .pipe(
@@ -3008,6 +3034,7 @@ const make = Effect.gen(function* () {
               parentThreadId: scope.thread.threadId,
               parentRunId: parentRun.id,
               parentNodeId,
+              ...(isCrossProject ? { targetProjectId } : {}),
               task: taskPrompt(input),
               ...(input.title === undefined ? {} : { title: input.title }),
               modelSelection: target.modelSelection,
@@ -3910,6 +3937,187 @@ const make = Effect.gen(function* () {
         runId: result.run.id,
         status: result.type === "already_terminal" ? result.run.status : "interrupt_requested",
       } satisfies OrchestratorMcpThreadInterruptResult;
+    }),
+    projectTasks: Effect.fn("OrchestratorMcpService.projectTasks")(function* (callerScope, input) {
+      yield* requireCapability(callerScope);
+      const scope = yield* requireThreadScope(callerScope, "project_tasks");
+      if (input.action === "create" && input.title === undefined) {
+        return yield* failure("invalid_request", "Creating a project task requires `title`.");
+      }
+      if (input.action === "update") {
+        if (input.taskId === undefined) {
+          return yield* failure("invalid_request", "Updating a project task requires `taskId`.");
+        }
+        if (
+          input.title === undefined &&
+          input.status === undefined &&
+          input.notes === undefined &&
+          input.linkedThreadId === undefined
+        ) {
+          return yield* failure(
+            "invalid_request",
+            "Updating a project task requires at least one of `title`, `status`, `notes`, or `linkedThreadId`.",
+          );
+        }
+      }
+      if (input.action === "delete" && input.taskId === undefined) {
+        return yield* failure("invalid_request", "Deleting a project task requires `taskId`.");
+      }
+
+      // Walk subagent parents up to the owning root thread so a fork of a Project cannot
+      // reach the source Project's tasks through a stale `rootThreadId`.
+      let current = (yield* loadThreadRecords(scope.thread.threadId, [])).thread;
+      const visited = new Set<ThreadId>([current.id]);
+      while (
+        current.lineage.relationshipToParent === "subagent" &&
+        current.lineage.parentThreadId !== null
+      ) {
+        const parentId = current.lineage.parentThreadId;
+        if (visited.has(parentId)) break;
+        visited.add(parentId);
+        current = (yield* loadThreadRecords(parentId, [])).thread;
+      }
+      if (!isListedThreadLineage(current.lineage) || current.orchestratorProject == null) {
+        return yield* failure(
+          "invalid_request",
+          "This thread does not belong to an orchestrator Project.",
+        );
+      }
+      const projectThreadId = current.id;
+
+      if (input.action === "list") {
+        return {
+          projectThreadId,
+          action: "list",
+          tasks: [...(current.orchestratorProject.tasks ?? [])],
+        } satisfies OrchestratorMcpProjectTasksResult;
+      }
+
+      const key = yield* requestKey(input.clientRequestId);
+      const commandId = stableCommandId({
+        scope,
+        requestKey: key,
+        operation: `project-tasks-${input.action}`,
+      });
+
+      return yield* withProjectTaskLock(
+        projectThreadId,
+        Effect.gen(function* () {
+          const root = (yield* loadThreadRecords(projectThreadId, [])).thread;
+          const existingConfig = root.orchestratorProject;
+          if (!isListedThreadLineage(root.lineage) || existingConfig == null) {
+            return yield* failure(
+              "invalid_request",
+              "This thread does not belong to an orchestrator Project.",
+            );
+          }
+          const existingTasks = existingConfig.tasks ?? [];
+          if (
+            input.clientRequestId !== undefined &&
+            (yield* threadManagement.hasReceipt(commandId))
+          ) {
+            return {
+              projectThreadId,
+              action: input.action,
+              ...(input.action === "delete" && input.taskId !== undefined
+                ? { deletedTaskId: input.taskId }
+                : {}),
+              tasks: [...existingTasks],
+            } satisfies OrchestratorMcpProjectTasksResult;
+          }
+
+          const nowIso = DateTime.formatIso(yield* DateTime.now);
+          let nextTasks: ReadonlyArray<OrchestratorProjectTask>;
+          let mutatedTask: OrchestratorProjectTask | undefined;
+
+          if (input.action === "create") {
+            let maxNumber = 0;
+            for (const task of existingTasks) {
+              const match = /^task-(\d+)$/.exec(task.id);
+              if (match?.[1] !== undefined) {
+                const parsed = Number.parseInt(match[1], 10);
+                if (Number.isSafeInteger(parsed) && parsed > maxNumber) maxNumber = parsed;
+              }
+            }
+            const created: OrchestratorProjectTask = {
+              id: `task-${maxNumber + 1}`,
+              title: input.title!,
+              status: input.status ?? "todo",
+              ...(input.notes === undefined ? {} : { notes: input.notes }),
+              ...(input.linkedThreadId === undefined
+                ? {}
+                : { linkedThreadId: input.linkedThreadId }),
+              createdAt: nowIso,
+              updatedAt: nowIso,
+            };
+            nextTasks = [...existingTasks, created];
+            mutatedTask = created;
+          } else if (input.action === "update") {
+            const targetIndex = existingTasks.findIndex((task) => task.id === input.taskId);
+            if (targetIndex === -1) {
+              return yield* failure(
+                "task_not_found",
+                `Project task ${input.taskId} was not found.`,
+              );
+            }
+            const previous = existingTasks[targetIndex]!;
+            const updated: OrchestratorProjectTask = {
+              ...previous,
+              ...(input.title === undefined ? {} : { title: input.title }),
+              ...(input.status === undefined ? {} : { status: input.status }),
+              ...(input.notes === undefined ? {} : { notes: input.notes }),
+              ...(input.linkedThreadId === undefined
+                ? {}
+                : { linkedThreadId: input.linkedThreadId }),
+              updatedAt: nowIso,
+            };
+            nextTasks = existingTasks.map((task, index) => (index === targetIndex ? updated : task));
+            mutatedTask = updated;
+          } else {
+            if (!existingTasks.some((task) => task.id === input.taskId)) {
+              return yield* failure(
+                "task_not_found",
+                `Project task ${input.taskId} was not found.`,
+              );
+            }
+            nextTasks = existingTasks.filter((task) => task.id !== input.taskId);
+          }
+
+          const nextOrchestratorProject: OrchestratorProjectConfig = {
+            ...existingConfig,
+            tasks: nextTasks,
+          };
+          const dispatched = yield* threadManagement
+            .dispatch({
+              type: "thread.metadata.update",
+              commandId,
+              threadId: projectThreadId,
+              orchestratorProject: nextOrchestratorProject,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "orchestration_error",
+                  `Unable to update project tasks on thread ${projectThreadId}: ${userFacingDispatchErrorMessage(error) ?? errorMessage(error)}`,
+                ),
+              ),
+            );
+          const metadataEvent = dispatched.storedEvents.find(
+            (stored) => stored.event.type === "thread.metadata-updated",
+          );
+          const finalTasks =
+            metadataEvent?.event.type === "thread.metadata-updated"
+              ? [...(metadataEvent.event.payload.orchestratorProject?.tasks ?? [])]
+              : [...nextTasks];
+          return {
+            projectThreadId,
+            action: input.action,
+            ...(mutatedTask === undefined ? {} : { task: mutatedTask }),
+            ...(input.action === "delete" ? { deletedTaskId: input.taskId! } : {}),
+            tasks: finalTasks,
+          } satisfies OrchestratorMcpProjectTasksResult;
+        }),
+      );
     }),
   });
 });
