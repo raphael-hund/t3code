@@ -22,10 +22,10 @@ const FOLDER_DOT_CLASS_NAME = {
 } as const;
 
 const FOLDER_DOT_LABEL = {
-  attention: msg(", needs you", { $context: "project folder status, read after its name" }),
-  failed: msg(", failed", { $context: "project folder status, read after its name" }),
-  unread: msg(", done", { $context: "project folder status, read after its name" }),
-  working: msg(", working", { $context: "project folder status, read after its name" }),
+  attention: msg(", needs you", { $context: "folder status, read after its name" }),
+  failed: msg(", failed", { $context: "folder status, read after its name" }),
+  unread: msg(", done", { $context: "folder status, read after its name" }),
+  working: msg(", working", { $context: "folder status, read after its name" }),
 } as const;
 
 /** The folder's sidebar tree row; its thread rows name it as their parent. */
@@ -119,7 +119,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
                 data-sidebar-action-for={rowId}
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label={gt("New thread in {project}", { project: group.displayName })}
+                aria-label={gt("New thread in {folder}", { folder: group.displayName })}
                 onClick={() => props.onNewThread(group)}
               />
             }

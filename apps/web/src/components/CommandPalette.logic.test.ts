@@ -467,8 +467,8 @@ describe("buildThreadActionItems", () => {
         projectSearchItems,
         threadSearchItems,
       }).map((group) => group.label);
-    expect(labels("lakebed")).toEqual(["Projects", "Threads"]);
-    expect(labels("lake")).toEqual(["Threads", "Projects"]);
+    expect(labels("lakebed")).toEqual(["Folders", "Threads"]);
+    expect(labels("lake")).toEqual(["Threads", "Folders"]);
   });
 
   it("keeps a command first over a thread in daily use that matches as well", () => {

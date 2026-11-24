@@ -1,6 +1,7 @@
 # 0001: Model Projects as Orchestrator-Mode Threads and Separate Sidebar Folders from Upstream ProjectId
 
 ---
+
 status: accepted
 date: 2026-11-24
 ---

@@ -40,9 +40,7 @@ export function SidebarFolderDrop(props: { children: ReactNode }) {
         stackedThreadToast({
           type: "info",
           title: gt("Dropping folders needs the desktop app"),
-          description: gt(
-            "Browsers do not share folder paths. Use Add project to choose a folder.",
-          ),
+          description: gt("Browsers do not share folder paths. Use Add folder to choose one."),
         }),
       );
       return;
@@ -114,7 +112,7 @@ export function SidebarFolderDrop(props: { children: ReactNode }) {
           toastManager.add(
             stackedThreadToast({
               type: "info",
-              title: gt("Only folders can be added as projects"),
+              title: gt("Only folders can be added here"),
               description: gt("Drop files on a thread to attach them."),
             }),
           );
@@ -130,7 +128,7 @@ export function SidebarFolderDrop(props: { children: ReactNode }) {
           <FolderPlusIcon className="size-5 text-sidebar-muted-foreground" />
           {bridge === undefined
             ? gt("Dropping folders needs the desktop app")
-            : gt("Drop folders to add projects")}
+            : gt("Drop folders to add them")}
         </div>
       ) : null}
     </div>
