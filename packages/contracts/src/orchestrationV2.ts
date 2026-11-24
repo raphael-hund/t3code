@@ -87,7 +87,7 @@ import {
 } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
-import { PROJECT_TRACKED_FOLDERS_MAX } from "./project.ts";
+import { PROJECT_TRACKED_FOLDERS_MAX, ProjectIconOverride } from "./project.ts";
 import {
   TurnTokenUsage,
   ToolActivitySurface,
@@ -497,6 +497,51 @@ const OrchestrationV2LastTitleRegeneration = Schema.Struct({
   completedAt: Schema.DateTimeUtc,
 });
 
+/**
+ * Marks a top-level thread as a sidebar Project: an orchestrator chat with an optional durable goal.
+ * Absent or null means a normal thread. Subagents and forks never inherit it.
+ */
+export const OrchestratorProjectAvatar = Schema.Union([
+  ProjectIconOverride,
+  Schema.Struct({
+    kind: Schema.Literal("image"),
+    dataUrl: Schema.String.check(
+      Schema.isMaxLength(131072),
+      Schema.isPattern(/^data:image\/(?:png|webp|jpeg);base64,[A-Za-z0-9+/=]+$/),
+    ),
+  }),
+]);
+export type OrchestratorProjectAvatar = typeof OrchestratorProjectAvatar.Type;
+
+export const OrchestratorProjectTaskStatus = Schema.Literals(["todo", "in_progress", "done"]);
+export type OrchestratorProjectTaskStatus = typeof OrchestratorProjectTaskStatus.Type;
+
+export const OrchestratorProjectTask = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  status: OrchestratorProjectTaskStatus,
+  notes: Schema.optional(Schema.NullOr(Schema.String)),
+  linkedThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type OrchestratorProjectTask = typeof OrchestratorProjectTask.Type;
+
+export const OrchestratorProjectConfig = Schema.Struct({
+  goal: Schema.optional(Schema.NullOr(Schema.String)),
+  avatar: Schema.optional(Schema.NullOr(OrchestratorProjectAvatar)),
+  tasks: Schema.optional(Schema.Array(OrchestratorProjectTask)),
+  orderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type OrchestratorProjectConfig = typeof OrchestratorProjectConfig.Type;
+
+/** Optional on every thread shape so stored events and older peers decode as normal threads. */
+const SidebarPlacementFields = {
+  orchestratorProject: Schema.optional(Schema.NullOr(OrchestratorProjectConfig)),
+  /** The `ServerSettings.sidebarGroups` entry this thread sits in; null or absent is ungrouped. */
+  sidebarFolderId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+} as const;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -549,6 +594,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  ...SidebarPlacementFields,
   /** Absent on threads written before tags existed; read as empty. */
   tags: Schema.optional(StoredThreadTags),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
@@ -2470,6 +2516,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  ...SidebarPlacementFields,
   /** Absent on threads written before tags existed; read as empty. */
   tags: Schema.optional(StoredThreadTags),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -3321,6 +3368,7 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(GitRefName),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    ...SidebarPlacementFields,
     /** Only the server sets this; a client's thread.create never carries one. */
     linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
     /** Only the server sets this, with `linkOrigin`, for a linked environment's delegated task. */
@@ -3486,6 +3534,10 @@ export const OrchestrationV2Command = Schema.Union([
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
     /** Link (object) or unlink (null) a pull request; absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+    /** Promote (object), demote (null), or leave unchanged (absent). Subagents cannot be promoted. */
+    orchestratorProject: SidebarPlacementFields.orchestratorProject,
+    /** Move into a sidebar group, clear with null, or leave unchanged (absent). */
+    sidebarFolderId: SidebarPlacementFields.sidebarFolderId,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.link"),

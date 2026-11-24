@@ -13,6 +13,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
+import { presentThreadShell } from "./models.ts";
 import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { isThreadWorking } from "./threadInbox.ts";
@@ -778,5 +779,23 @@ describe("resolveListedAncestorThreadRef", () => {
     expect(rowOf(task.id, environmentId, [parent, task])).toEqual(
       ref(remoteEnvironmentId, parent.id),
     );
+  });
+
+  it("presents orchestratorProject and sidebarFolderId with null defaults", () => {
+    const plain = presentThreadShell(environmentId, v2ThreadShell);
+    expect(plain.orchestratorProject).toBeNull();
+    expect(plain.sidebarFolderId).toBeNull();
+
+    const orchestratorProject = {
+      goal: "Ship Projects",
+      avatar: { kind: "monogram" as const, text: "PR", color: "blue" as const },
+    };
+    const presented = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      orchestratorProject,
+      sidebarFolderId: "clients",
+    });
+    expect(presented.orchestratorProject).toEqual(orchestratorProject);
+    expect(presented.sidebarFolderId).toBe("clients");
   });
 });

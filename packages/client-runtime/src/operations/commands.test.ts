@@ -45,11 +45,13 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
 import {
   archiveThread,
+  createThread,
   interruptThreadTurn,
   promoteQueuedRun,
   revertThreadCheckpoint,
   resumeThreadQueue,
   startThreadTurn,
+  updateThreadMetadata,
 } from "./commands.ts";
 
 const layerTestRandom = Layer.succeed(
@@ -1014,6 +1016,64 @@ describe("V2 environment commands", () => {
           type: "thread.stop",
           commandId: "stop-outside-history-window",
           threadId: v2ThreadId,
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect("forwards orchestratorProject and sidebarFolderId on thread create and update", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const orchestratorProject = {
+        goal: "Ship Projects",
+        avatar: { kind: "emoji" as const, emoji: "🚀" },
+        tasks: [
+          {
+            id: "task-1",
+            title: "Wire commands",
+            status: "todo" as const,
+            createdAt: "2026-06-20T00:00:00.000Z",
+            updatedAt: "2026-06-20T00:00:00.000Z",
+          },
+        ],
+      };
+
+      yield* createThread({
+        commandId: CommandId.make("create-project"),
+        threadId: v2ThreadId,
+        projectId: ProjectId.make("project-1"),
+        title: "Launch",
+        modelSelection: v2Projection.thread.modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        orchestratorProject,
+        sidebarFolderId: "clients",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      yield* updateThreadMetadata({
+        commandId: CommandId.make("demote-project"),
+        threadId: v2ThreadId,
+        orchestratorProject: null,
+        sidebarFolderId: null,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(commands).toEqual([
+        expect.objectContaining({
+          type: "thread.create",
+          commandId: "create-project",
+          threadId: v2ThreadId,
+          orchestratorProject,
+          sidebarFolderId: "clients",
+        }),
+        {
+          type: "thread.metadata.update",
+          commandId: "demote-project",
+          threadId: v2ThreadId,
+          orchestratorProject: null,
+          sidebarFolderId: null,
         },
       ]);
     }).pipe(Effect.provide(layerTestRandom)),

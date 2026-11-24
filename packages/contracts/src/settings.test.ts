@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { type CommandId, ProjectId } from "./baseSchemas.ts";
+import { type CommandId, ProjectId, SidebarGroup } from "./index.ts";
 import {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
@@ -42,6 +42,7 @@ const decodeClientServerSettingsPatch = Schema.decodeUnknownSync(ClientServerSet
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+const decodeSidebarGroup = Schema.decodeUnknownSync(SidebarGroup);
 
 it("drops theme defaults from a client's settings patch", () => {
   expect(
@@ -553,5 +554,28 @@ describe("server model preferences", () => {
     const input = { favorites: [], providerModelPreferences: {} };
     expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
     expect(decodeServerSettingsPatch(input)).toEqual(input);
+  });
+});
+
+describe("sidebar groups", () => {
+  it("defaults to empty, round-trips both scopes, and rejects invalid entries", () => {
+    expect(DEFAULT_SERVER_SETTINGS.sidebarGroups).toEqual([]);
+    expect(decodeServerSettings({}).sidebarGroups).toEqual([]);
+    const groups = [
+      { id: "clients", name: "Clients", scope: "projects", orderKey: "a0" },
+      { id: "inbox", name: "Inbox", scope: "threads" },
+    ];
+    expect(
+      encodeServerSettings(decodeServerSettings({ sidebarGroups: groups })).sidebarGroups,
+    ).toEqual(groups);
+    expect(decodeServerSettingsPatch({ sidebarGroups: groups }).sidebarGroups).toEqual(groups);
+    expect(decodeSidebarGroup(groups[0])).toEqual(groups[0]);
+    for (const invalid of [
+      { id: " ", name: "Clients", scope: "projects" },
+      { id: "clients", name: "", scope: "projects" },
+      { id: "clients", name: "Clients", scope: "unknown" },
+    ]) {
+      expect(() => decodeServerSettingsPatch({ sidebarGroups: [invalid] })).toThrow();
+    }
   });
 });

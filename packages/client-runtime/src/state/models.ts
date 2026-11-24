@@ -6,6 +6,7 @@ import type {
   MessageId,
   OrchestrationProjectShell,
   OrchestrationV2ProviderGoal,
+  OrchestratorProjectConfig,
   OrchestrationV2RunStatus,
   OrchestrationV2ProviderFailureClass,
   OrchestrationV2ThreadProjection,
@@ -203,6 +204,10 @@ export interface EnvironmentThreadShell {
   readonly autoSettleDisabledAt?: string | null;
   readonly pinOrderKey: string | null;
   readonly activeOrderKey: string | null;
+  /** Set on a sidebar Project; null on normal threads and on shells from servers without Projects. */
+  readonly orchestratorProject: OrchestratorProjectConfig | null;
+  /** The `sidebarGroups` entry this thread sits in, or null when ungrouped. */
+  readonly sidebarFolderId: string | null;
   readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly branchPullRequest?: ThreadLinkedPullRequest | null;
@@ -362,6 +367,8 @@ export function presentThreadShell(
     autoSettleDisabledAt: nullableIso(thread.autoSettleDisabledAt ?? null),
     pinOrderKey: thread.pinOrderKey ?? null,
     activeOrderKey: thread.activeOrderKey ?? null,
+    orchestratorProject: thread.orchestratorProject ?? null,
+    sidebarFolderId: thread.sidebarFolderId ?? null,
     ...(thread.lastVisitedAt === undefined
       ? {}
       : { lastVisitedAt: nullableIso(thread.lastVisitedAt) }),

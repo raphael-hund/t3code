@@ -49,6 +49,7 @@ import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { loadSubscriberShellSnapshot } from "./ShellStream.ts";
 import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
@@ -157,6 +158,7 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
       | "pinnedAt"
       | "pinOrderKey"
       | "snoozedUntil"
+      | "updatedAt"
     >,
   ) => ({
     id: row.id,
@@ -167,10 +169,16 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
     pinnedAt: iso(row.pinnedAt),
     pinOrderKey: row.pinOrderKey ?? null,
     snoozedUntil: iso(row.snoozedUntil),
+    updatedAt: iso(row.updatedAt),
   });
   assert.deepEqual(index.map(trimmed), shells.map(trimmed));
   shells.forEach((shell, position) => {
     if (isLiveSubagentShell(shell)) assert.isTrue(index[position]?.mayBeLive, shell.id);
+    assert.equal(
+      index[position]?.isOrchestratorProject,
+      isListedThreadLineage(shell.lineage) && shell.orchestratorProject != null,
+      shell.id,
+    );
   });
 });
 
@@ -3395,6 +3403,193 @@ it.effect("SQL list older settled threads below a cursor", () =>
       counts: [{ projectId: ProjectId.make("project:b"), count: 1 }],
     });
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "reloads Project shells, live subagents, five newest idle subagents, and nested chains from SQLite",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const projectId = ProjectId.make("project:reload-tree");
+      const baseMs = Date.parse("2026-09-01T00:00:00.000Z");
+      const at = (seconds: number) => DateTime.makeUnsafe(baseMs + seconds * 1_000);
+      const projectConfig = {
+        goal: "Ship Projects",
+        orderKey: "a0",
+        avatar: { kind: "image" as const, dataUrl: "data:image/png;base64,YQ==" },
+        tasks: [
+          {
+            id: "task-1",
+            title: "Build contracts",
+            status: "done" as const,
+            createdAt: "2026-09-01T00:00:00.000Z",
+            updatedAt: "2026-09-01T00:00:00.000Z",
+          },
+        ],
+      };
+
+      const insertThread = (input: {
+        readonly id: string;
+        readonly parentId?: string;
+        readonly rootId?: string;
+        readonly updatedSec: number;
+        readonly orchestratorProject?: typeof projectConfig | null;
+        readonly sidebarFolderId?: string | null;
+        readonly settledSec?: number;
+      }) => {
+        const threadId = ThreadId.make(input.id);
+        const ts = at(input.updatedSec);
+        return store.apply({
+          id: EventId.make(`event:${input.id}`),
+          type: "thread.created",
+          threadId,
+          occurredAt: ts,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId,
+            title: input.id,
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            ...(input.orchestratorProject === undefined
+              ? {}
+              : { orchestratorProject: input.orchestratorProject }),
+            ...(input.sidebarFolderId === undefined
+              ? {}
+              : { sidebarFolderId: input.sidebarFolderId }),
+            activeProviderThreadId: null,
+            lineage:
+              input.parentId === undefined
+                ? { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId }
+                : {
+                    parentThreadId: ThreadId.make(input.parentId),
+                    relationshipToParent: "subagent",
+                    rootThreadId: ThreadId.make(input.rootId ?? input.parentId),
+                  },
+            forkedFrom: null,
+            createdAt: ts,
+            updatedAt: ts,
+            archivedAt: null,
+            settledOverride: input.settledSec === undefined ? null : "settled",
+            settledAt: input.settledSec === undefined ? null : at(input.settledSec),
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+      };
+
+      // Older settled Project root (settled before 25 newer settled threads) must still load.
+      yield* insertThread({
+        id: "project-root",
+        updatedSec: 1,
+        settledSec: 1,
+        orchestratorProject: projectConfig,
+        sidebarFolderId: "clients",
+      });
+      for (let index = 0; index < 25; index++) {
+        yield* insertThread({
+          id: `settled-${index}`,
+          updatedSec: 100 + index,
+          settledSec: 100 + index,
+        });
+      }
+      for (let index = 0; index < 7; index++) {
+        yield* insertThread({
+          id: `child-${index}`,
+          parentId: "project-root",
+          rootId: "project-root",
+          updatedSec: 10 + index,
+        });
+      }
+      // Nested chain under the oldest child keeps child-0 and its nested descendant.
+      yield* insertThread({
+        id: "grandchild",
+        parentId: "child-0",
+        rootId: "project-root",
+        updatedSec: 50,
+      });
+      // Live subagent is kept alongside the 5 newest idle subagents.
+      yield* insertThread({
+        id: "live-child",
+        parentId: "project-root",
+        rootId: "project-root",
+        updatedSec: 2,
+      });
+      yield* store.apply({
+        id: EventId.make("event:live-child:run"),
+        type: "run.created",
+        threadId: ThreadId.make("live-child"),
+        runId: RunId.make("run:live-child"),
+        occurredAt: at(2),
+        payload: {
+          id: RunId.make("run:live-child"),
+          threadId: ThreadId.make("live-child"),
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:live-child"),
+          rootNodeId: NodeId.make("node:live-child"),
+          activeAttemptId: null,
+          status: "running",
+          requestedAt: at(2),
+          startedAt: at(2),
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      // Non-Project idle subagent is still pruned.
+      yield* insertThread({ id: "plain-root", updatedSec: 200 });
+      yield* insertThread({
+        id: "plain-idle-child",
+        parentId: "plain-root",
+        rootId: "plain-root",
+        updatedSec: 201,
+      });
+
+      yield* assertShellIndexCoversShells();
+      const loaded = yield* loadSubscriberShellSnapshot({
+        sql,
+        listShellIndex: store.listActiveShellIndex(),
+        readThreads: (threadIds) =>
+          store.readShellSnapshot({
+            location: "active",
+            ...(threadIds === undefined ? {} : { threadIds }),
+          }),
+        listProjects: Effect.succeed([]),
+        latestSequence: Effect.succeed(1),
+        options: { omitIdleSubagents: true, omitOlderSettled: true },
+      });
+
+      const ids = new Set(loaded.snapshot.threads.map((thread) => thread.id as string));
+      for (const expectedId of [
+        "project-root",
+        "child-0",
+        "child-2",
+        "child-3",
+        "child-4",
+        "child-5",
+        "child-6",
+        "grandchild",
+        "live-child",
+        "plain-root",
+      ]) {
+        assert.isTrue(ids.has(expectedId), `expected ${expectedId} to be retained on reload`);
+      }
+      assert.isFalse(ids.has("child-1"));
+      assert.isFalse(ids.has("plain-idle-child"));
+
+      const rootShell = loaded.snapshot.threads.find((thread) => thread.id === "project-root");
+      assert.deepEqual(rootShell?.orchestratorProject, projectConfig);
+      assert.equal(rootShell?.sidebarFolderId, "clients");
+    }).pipe(Effect.provide(layerTest)),
 );
 
 // regression: #25806 pending request cards outlive the history window that drops their turn

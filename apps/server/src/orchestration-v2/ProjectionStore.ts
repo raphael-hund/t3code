@@ -515,9 +515,12 @@ export interface ActiveShellIndexEntry extends Pick<
   | "pinnedAt"
   | "pinOrderKey"
   | "snoozedUntil"
+  | "updatedAt"
 > {
   /** False only when no run, request, work item, or watch can make the shell live. */
   readonly mayBeLive: boolean;
+  /** A top-level thread with `orchestratorProject` set: a sidebar Project. */
+  readonly isOrchestratorProject: boolean;
   /** Whether it delegated a task to a linked environment, whose clients nest that task under it. */
   readonly hasRemoteTasks: boolean;
 }
@@ -2019,6 +2022,8 @@ export function threadShellFromProjection(
 
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: projection.thread.pinOrderKey ?? null,
+    orchestratorProject: projection.thread.orchestratorProject ?? null,
+    sidebarFolderId: projection.thread.sidebarFolderId ?? null,
     ...(projection.thread.tags?.length ? { tags: projection.thread.tags } : {}),
     lastVisitedAt: projection.thread.lastVisitedAt,
     opens: projection.thread.opens ?? null,
@@ -2320,6 +2325,8 @@ function shellFromState(input: {
 
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
+    orchestratorProject: input.state.thread.orchestratorProject ?? null,
+    sidebarFolderId: input.state.thread.sidebarFolderId ?? null,
     ...(input.state.thread.tags?.length ? { tags: input.state.thread.tags } : {}),
     lastVisitedAt: input.state.thread.lastVisitedAt,
     opens: input.state.thread.opens ?? null,
@@ -9560,12 +9567,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly pinned_at: string | null;
         readonly pin_order_key: string | null;
         readonly snoozed_until: string | null;
+        readonly updated_at: string;
+        readonly is_orchestrator_project: number | null;
         readonly may_be_live: number;
         readonly has_remote_tasks: number;
       }>`
         SELECT
           t.thread_id,
           t.project_id,
+          t.updated_at,
           ${indexedField("$.lineage.relationshipToParent")} AS relationship_to_parent,
           ${indexedField("$.lineage.parentThreadId")} AS parent_thread_id,
           ${indexedField("$.lineage.rootThreadId")} AS root_thread_id,
@@ -9575,6 +9585,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ${indexedField("$.pinnedAt")} AS pinned_at,
           ${indexedField("$.pinOrderKey")} AS pin_order_key,
           ${indexedField("$.snoozedUntil")} AS snoozed_until,
+          -- Not in the index: only top-level rows read their payload for it, and those are few.
+          CASE WHEN ${indexedField("$.lineage.relationshipToParent")} IS NOT 'subagent'
+            THEN ${indexedField("$.orchestratorProject", "json_type")} = 'object'
+          END AS is_orchestrator_project,
           -- A superset of isLiveSubagentShell: the sources of its run status, pending request,
           -- and pending background work. Each source is one list for the whole read, found
           -- through its partial index, so finished threads cost no lookups.
@@ -9639,6 +9653,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         pinnedAt: row.pinned_at === null ? null : DateTime.makeUnsafe(row.pinned_at),
         pinOrderKey: row.pin_order_key,
         snoozedUntil: row.snoozed_until === null ? null : DateTime.makeUnsafe(row.snoozed_until),
+        updatedAt: DateTime.makeUnsafe(row.updated_at),
+        isOrchestratorProject: row.is_orchestrator_project === 1,
         mayBeLive: row.may_be_live === 1,
         hasRemoteTasks: row.has_remote_tasks === 1,
       }));

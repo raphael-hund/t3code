@@ -198,6 +198,38 @@ describe("omitIdleSubagentShells", () => {
     ]);
   });
 
+  it("keeps project children by recency and retains nested chains", () => {
+    const threads = [
+      row("root", null, { orchestratorProject: { goal: "Ship" } }),
+      ...Array.from({ length: 7 }, (_, i) =>
+        row(`child-${i}`, "root", { updatedAt: DateTime.makeUnsafe(i * 1000) }),
+      ),
+      row("live", "root", { activityRunStatus: "running" }),
+      row("nested", "child-0", { updatedAt: DateTime.makeUnsafe(10_000) }),
+      row("deep-nested", "nested", { updatedAt: DateTime.makeUnsafe(11_000) }),
+      row("outside", null),
+      row("outside-idle", "outside"),
+    ];
+    const ids = omitIdleSubagentShells(threads).map((thread) => thread.id);
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        "root",
+        "child-0",
+        "child-2",
+        "child-3",
+        "child-4",
+        "child-5",
+        "child-6",
+        "live",
+        "nested",
+        "deep-nested",
+        "outside",
+      ]),
+    );
+    expect(ids).not.toContain("child-1");
+    expect(ids).not.toContain("outside-idle");
+  });
+
   it("still filters the transcript events of omitted children for a subscriber that opts in", () => {
     const threads = [row("root", null), row("idle", "root")];
     const omitted = activeShellRowsForSubscriber(threads, true);
@@ -295,6 +327,7 @@ describe("omitOlderSettledShells", () => {
       row("snoozed", 30, { snoozedUntil: DateTime.makeUnsafe(101 * DAY) }),
       row("woke", 30, { snoozedUntil: DateTime.makeUnsafe(99 * DAY) }),
       row("running", 30, { activityRunStatus: "running" }),
+      row("project-root", 30, { orchestratorProject: { goal: "Keep visible" } }),
       row("parent", 30),
       shellFixture({
         id: ThreadId.make("child"),
@@ -321,12 +354,13 @@ describe("omitOlderSettledShells", () => {
     expect(result.threads.map((thread) => thread.id).slice(25)).toEqual([
       "snoozed",
       "running",
+      "project-root",
       "parent",
       "child",
       "side-chat-parent",
       "side-chat",
     ]);
-    expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 5 }]);
+    expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 6 }]);
   });
 });
 
