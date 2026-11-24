@@ -313,7 +313,7 @@ function openIntentView(
     case "new-thread-in":
       return {
         addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-        groups: [{ value: NEW_THREAD_IN_GROUP, label: resolve(msg("Projects")), items: [] }],
+        groups: [{ value: NEW_THREAD_IN_GROUP, label: resolve(msg("Folders")), items: [] }],
       };
     case "change-theme":
       return {
@@ -1380,7 +1380,7 @@ function OpenCommandPaletteDialog(props: {
       title: gt("New thread in..."),
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: NEW_THREAD_IN_GROUP, label: gt("Projects"), items: projectThreadItems }],
+      groups: [{ value: NEW_THREAD_IN_GROUP, label: gt("Folders"), items: projectThreadItems }],
     });
   }
 
@@ -1632,6 +1632,7 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:add-project",
     searchTerms: [
+      "add folder",
       "add project",
       "folder",
       "directory",
@@ -1650,7 +1651,7 @@ function OpenCommandPaletteDialog(props: {
       "url",
       "environment",
     ],
-    title: gt("Add project"),
+    title: gt("Add folder"),
     icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
     keepOpen: true,
     run: async () => {
@@ -1820,7 +1821,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:project-pin",
       searchTerms: ["pin", "unpin", "project", "favorite"],
-      title: currentProjectGroup.pinned ? gt("Unpin project") : gt("Pin project"),
+      title: currentProjectGroup.pinned ? gt("Unpin folder") : gt("Pin folder"),
       description: currentProjectGroup.displayName,
       icon: currentProjectGroup.pinned ? (
         <PinOffIcon className={ITEM_ICON_CLASS} />
@@ -1848,7 +1849,7 @@ function OpenCommandPaletteDialog(props: {
         "remove",
         "t3.json",
       ],
-      title: gt("Project settings"),
+      title: gt("Folder settings"),
       description: contextualProjectGroup.displayName,
       icon: <FolderIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
@@ -1905,7 +1906,7 @@ function OpenCommandPaletteDialog(props: {
           ? [
               {
                 value: NEW_THREAD_IN_GROUP,
-                label: gt("Projects"),
+                label: gt("Folders"),
                 // Every project archived and no "No project" home leaves only adding one.
                 items: projectThreadItems.length > 0 ? projectThreadItems : [addProjectAction],
               },

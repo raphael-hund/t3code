@@ -1839,10 +1839,10 @@ describe("resolveScopedNewThreadProjectRef", () => {
 });
 
 describe("filterSidebarProjectScopeItems", () => {
-  it("hides Add project and All projects while searching", () => {
+  it("hides Add folder and All folders while searching", () => {
     const items = [
-      { value: ADD_PROJECT_SCOPE_ITEM_VALUE, label: "Add project" },
-      { value: "all", label: "All projects" },
+      { value: ADD_PROJECT_SCOPE_ITEM_VALUE, label: "Add folder" },
+      { value: "all", label: "All folders" },
       { value: "p1", label: "project" },
     ];
     const filter = (query: string) =>

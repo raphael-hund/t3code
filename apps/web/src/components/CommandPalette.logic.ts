@@ -645,7 +645,7 @@ export function filterCommandPaletteGroups(
     if (input.projectSearchItems.length > 0) {
       searchableGroups.push({
         value: "projects-search",
-        label: resolve(msg("Projects")),
+        label: resolve(msg("Folders")),
         items: input.projectSearchItems,
       });
     }

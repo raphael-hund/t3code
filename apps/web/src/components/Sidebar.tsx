@@ -848,8 +848,8 @@ function useSidebarLookups() {
     projectGroups.map((project) => [project.projectKey, project] as const),
   );
   const projectScopeItems = [
-    { value: ADD_PROJECT_SCOPE_ITEM_VALUE, label: gt("Add project") },
-    { value: "all", label: gt("All projects") },
+    { value: ADD_PROJECT_SCOPE_ITEM_VALUE, label: gt("Add folder") },
+    { value: "all", label: gt("All folders") },
     ...pickableProjectGroups(projectGroups).map((project) => ({
       value: project.projectKey,
       label: project.displayName,
@@ -1004,7 +1004,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   });
   const boringSidebarEnabled = useClientSettings((settings) => settings.boringSidebarEnabled);
-  const folderRowsMultiline = useClientSettings((settings) => settings.boringSidebarMultilineRows);
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
@@ -1298,11 +1297,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ...(canPinProject(group)
                 ? [
                     group.pinned
-                      ? { id: "unpin", label: gt("Unpin project"), icon: "pin-off" }
-                      : { id: "pin", label: gt("Pin project"), icon: "pin" },
+                      ? { id: "unpin", label: gt("Unpin folder"), icon: "pin-off" }
+                      : { id: "pin", label: gt("Pin folder"), icon: "pin" },
                   ]
                 : []),
-              { id: "project-settings", label: gt("Project settings"), icon: "settings" },
+              { id: "project-settings", label: gt("Folder settings"), icon: "settings" },
             ],
             position,
             source,
@@ -1608,7 +1607,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     })();
   };
 
-  const readOpensPullRequestsInRightPanel = useStableCallback(() => routeThreadRef !== null);
   const handleThreadClick = (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
     if (isSidebarNestedLinkClick(event.target)) return;
     const isMac = isMacPlatform(navigator.platform);
@@ -3123,12 +3121,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       <SidebarHeaderIconButton
                         label={
                           scopedProjectGroups.length > 0
-                            ? gt("Projects: {projects}", {
-                                projects: scopedProjectGroups
+                            ? gt("Folders: {folders}", {
+                                folders: scopedProjectGroups
                                   .map((project) => project.displayName)
                                   .join(", "),
                               })
-                            : gt("Projects")
+                            : gt("Folders")
                         }
                       />
                     }
@@ -3164,8 +3162,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     finalFocus={(closeType) => closeType === "keyboard"}
                   >
                     <ComboboxSearchInput
-                      aria-label={gt("Search projects")}
-                      placeholder={gt("Search projects...")}
+                      aria-label={gt("Search folders")}
+                      placeholder={gt("Search folders...")}
                       value={projectScopeMenuState.query}
                       onKeyDown={(event) => {
                         if (
@@ -3211,7 +3209,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       }
                     />
                     <ComboboxEmpty>
-                      <T>No matching projects.</T>
+                      <T>No matching folders.</T>
                     </ComboboxEmpty>
                     <ComboboxList aria-multiselectable>
                       {(item: (typeof projectScopeItems)[number]) => {
@@ -3220,7 +3218,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             <ComboboxItem key={item.value} hideIndicator value={item}>
                               <FolderPlusIcon className="size-4 shrink-0" />
                               <span className="min-w-0 truncate text-sm">{item.label}</span>
-                              {/* Keeps "Add project" as tall as the project rows. */}
+                              {/* Keeps "Add folder" as tall as the folder rows. */}
                               <span className="ml-auto size-7 shrink-0 sm:size-6" />
                             </ComboboxItem>
                           );
@@ -3277,8 +3275,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                     variant="ghost-muted"
                                     tabIndex={-1}
                                     aria-hidden="true"
-                                    title={gt("Project settings for {project}", {
-                                      project: project.displayName,
+                                    title={gt("Folder settings for {folder}", {
+                                      folder: project.displayName,
                                     })}
                                     onPointerDown={(event) => event.stopPropagation()}
                                     onClick={(event) => {
@@ -3290,7 +3288,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 }
                               />
                             ) : (
-                              // Keeps "All projects" as tall as the project rows.
+                              // Keeps "All folders" as tall as the folder rows.
                               <span className="ml-auto size-7 shrink-0 sm:size-6" />
                             )}
                           </ComboboxItem>
@@ -3424,7 +3422,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               {projects.length === 0 ? (
                 <>
                   <span>
-                    <T>No projects yet</T>
+                    <T>No folders yet</T>
                   </span>
                   <button
                     type="button"
@@ -3432,7 +3430,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                   >
                     <PlusIcon className="-mx-0.5 size-3" />
-                    <T>Add project</T>
+                    <T>Add folder</T>
                   </button>
                 </>
               ) : scopedProjectGroups.length > 0 ? (
@@ -3440,14 +3438,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   <span>
                     {settledCount > 0
                       ? scopedProjectGroups.length > 1
-                        ? gt("No active threads in these projects")
-                        : gt("No active threads in {project}", {
-                            project: scopedProjectGroups[0]!.displayName,
+                        ? gt("No active threads in these folders")
+                        : gt("No active threads in {folder}", {
+                            folder: scopedProjectGroups[0]!.displayName,
                           })
                       : scopedProjectGroups.length > 1
-                        ? gt("No threads in these projects yet")
-                        : gt("No threads in {project} yet", {
-                            project: scopedProjectGroups[0]!.displayName,
+                        ? gt("No threads in these folders yet")
+                        : gt("No threads in {folder} yet", {
+                            folder: scopedProjectGroups[0]!.displayName,
                           })}
                   </span>
                   <button
@@ -3455,7 +3453,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     onClick={() => setProjectScopeKeys([])}
                     className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                   >
-                    <T>Show all projects</T>
+                    <T>Show all folders</T>
                   </button>
                 </>
               ) : (
@@ -3507,13 +3505,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         );
                         const isCard =
                           section === "active" || section === "pinned" || section === "working";
-                        const rowVariant = folderRow
-                          ? folderRowsMultiline
-                            ? "folder-multiline"
-                            : "folder"
-                          : isCard
-                            ? "card"
-                            : "slim";
+                        const rowVariant = folderRow ? "folder" : isCard ? "card" : "slim";
                         return (
                           <SortableThreadRow
                             key={threadKey}
@@ -3571,7 +3563,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               routeRowThreadKey === threadKey ? revealActiveRow : undefined
                             }
                             isRouteThread={routeThreadKey === threadKey}
-                            readOpensPullRequestsInRightPanel={readOpensPullRequestsInRightPanel}
                             jumpLabel={
                               showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null
                             }
