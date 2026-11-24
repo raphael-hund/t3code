@@ -53,6 +53,7 @@ import {
 import {
   parseScopedThreadKey,
   scopeProjectRef,
+  scopedProjectKey,
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
@@ -61,6 +62,7 @@ import {
   type ContextMenuSource,
   ProjectId,
   type ScopedThreadRef,
+  type SidebarGroup as SidebarGroupConfig,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -137,7 +139,8 @@ import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useUpdateEnvironmentSettings } from "../hooks/useSettings";
+import { useRightPanelStore } from "../rightPanelStore";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -259,7 +262,29 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
-import { TooltipProvider } from "./ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { ProjectsSidebarSection } from "./project/ProjectsSidebarSection";
+import {
+  ProjectConfigDialog,
+  type ProjectConfigDialogState,
+} from "./project/ProjectConfigDialog";
+import {
+  CustomThreadFolderGroup,
+  THREAD_FOLDER_DROP_PREFIX,
+} from "./project/CustomThreadFolderGroup";
+import { InlineNewFolderRow } from "./project/CustomSidebarFolderHeader";
+import {
+  buildCustomFolderActionMenuItems,
+  buildProjectActionMenuItems,
+} from "./project/projectContextMenu.logic";
+import {
+  createSidebarGroupList,
+  deleteSidebarGroupList,
+  partitionNormalThreadsByCustomFolders,
+  partitionProjectSidebar,
+  renameSidebarGroupList,
+  sortSidebarGroupsForScope,
+} from "./project/projectSidebar.logic";
 import {
   composerDraftHasUserContent,
   DraftId,
@@ -442,6 +467,8 @@ function useSidebarThreads(input: {
   readonly folderGroups: readonly SidebarProjectSnapshot[] | null;
   // Keeps folders with no active threads, so a project the user filtered to or pinned can start one.
   readonly keepEmptyFolders: (group: SidebarProjectSnapshot) => boolean;
+  // Active threads assigned to custom Thread Folders stay out of Workspace Folders to avoid duplicates.
+  readonly customThreadFolderIds: ReadonlySet<string>;
 }) {
   const {
     projectScopeKey,
@@ -455,6 +482,7 @@ function useSidebarThreads(input: {
     departingThreadKey,
     folderGroups,
     keepEmptyFolders: keepEmpty,
+    customThreadFolderIds,
   } = input;
   const shelfRouteThreadKey = routeRowThreadKey === departingThreadKey ? null : routeRowThreadKey;
   // Folders already separate the work, so boring mode has no Working shelf.
@@ -541,26 +569,35 @@ function useSidebarThreads(input: {
   const visibleWorkingThreads = workingShelfExpanded
     ? workingThreads
     : routeThreadOnly(workingThreads, routeRowThreadKey);
+  const ungroupedActiveThreads =
+    customThreadFolderIds.size === 0
+      ? activeThreads
+      : activeThreads.filter(
+          (thread) =>
+            thread.sidebarFolderId === null || !customThreadFolderIds.has(thread.sidebarFolderId),
+        );
   const projectFolders =
     folderGroups === null
       ? null
-      : groupSidebarThreadsByProject(folderGroups, activeThreads, keepEmpty).map((folder) => {
-          const collapsed = !resolveProjectExpanded(
-            projectExpandedById,
-            sidebarFolderExpansionKeys(folder.group),
-          );
-          return {
-            group: folder.group,
-            collapsed,
-            // A closed folder still shows the open thread, and hints at the rest.
-            threads: collapsed
-              ? routeThreadOnly(folder.threads, routeRowThreadKey)
-              : folder.threads,
-            hiddenThreads: collapsed
-              ? folder.threads.filter((thread) => threadShellKey(thread) !== routeRowThreadKey)
-              : EMPTY_THREADS,
-          };
-        });
+      : groupSidebarThreadsByProject(folderGroups, ungroupedActiveThreads, keepEmpty).map(
+          (folder) => {
+            const collapsed = !resolveProjectExpanded(
+              projectExpandedById,
+              sidebarFolderExpansionKeys(folder.group),
+            );
+            return {
+              group: folder.group,
+              collapsed,
+              // A closed folder still shows the open thread, and hints at the rest.
+              threads: collapsed
+                ? routeThreadOnly(folder.threads, routeRowThreadKey)
+                : folder.threads,
+              hiddenThreads: collapsed
+                ? folder.threads.filter((thread) => threadShellKey(thread) !== routeRowThreadKey)
+                : EMPTY_THREADS,
+            };
+          },
+        );
   const orderedThreads = [
     ...pinnedThreads,
     ...(projectFolders === null

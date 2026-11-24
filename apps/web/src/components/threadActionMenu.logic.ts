@@ -9,6 +9,10 @@ export type ThreadActionMenuId =
   | "new-thread-on-branch"
   | "filter-by-project"
   | "turn-into-project"
+  | "promote-to-project"
+  | "move-to-folder"
+  | "move-to-folder:default"
+  | `move-to-folder:${string}`
   | "project-settings"
   | "pin"
   | "unpin"
@@ -125,6 +129,13 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Top-level normal thread eligible to be promoted to a sidebar Project. */
+  readonly canPromoteToProject?: boolean;
+  /** Custom thread folders available for "Move to folder…" submenu. */
+  readonly moveToFolder?: {
+    readonly currentFolderId: string | null;
+    readonly folders: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  } | null;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -245,6 +256,37 @@ export function buildThreadActionMenuItems(
             label: resolve(msg("Turn into project")),
             icon: "folder-plus",
             disabled: state.isRunning,
+          },
+        ]
+      : []),
+    ...(state.canPromoteToProject
+      ? [
+          {
+            id: "promote-to-project" as const,
+            label: resolve(msg("Promote to Project")),
+            icon: "sparkles",
+          },
+        ]
+      : []),
+    ...(state.moveToFolder
+      ? [
+          {
+            id: "move-to-folder" as const,
+            label: resolve(msg("Move to folder…")),
+            icon: "folder",
+            children: [
+              ...state.moveToFolder.folders.map((folder) => ({
+                id: `move-to-folder:${folder.id}` as const,
+                label: folder.name,
+                checked: state.moveToFolder?.currentFolderId === folder.id,
+              })),
+              {
+                id: "move-to-folder:default" as const,
+                label: resolve(msg("Default folder")),
+                checked: state.moveToFolder.currentFolderId === null,
+                separatorBefore: state.moveToFolder.folders.length > 0,
+              },
+            ],
           },
         ]
       : []),
