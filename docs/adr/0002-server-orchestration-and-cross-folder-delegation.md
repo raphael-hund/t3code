@@ -1,6 +1,7 @@
 # 0002: Server-Injected Orchestrator & Sub-Agent Instructions and Cross-Folder Local Delegation
 
 ---
+
 status: accepted
 date: 2026-11-24
 ---

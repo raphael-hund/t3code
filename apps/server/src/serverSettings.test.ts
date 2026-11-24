@@ -171,6 +171,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.deepEqual(settings.providerModelPreferences?.[provider]?.modelOrder, ["luna", "sol"]);
     }).pipe(Effect.provide(layerServerSettings())),
   );
+  it.effect("persists, broadcasts, and clears sidebar groups", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        assert.deepEqual((yield* service.getSettings).sidebarGroups, []);
+        const changes = yield* service.subscribeChanges;
+        const groups = [
+          { id: "clients", name: "Clients", scope: "projects" as const, orderKey: "a0" },
+          { id: "scratch", name: "Scratch", scope: "threads" as const },
+        ];
+        yield* service.updateSettings({ sidebarGroups: groups });
+        const received = Option.getOrThrow(yield* Stream.runHead(changes));
+        assert.deepEqual(received.sidebarGroups, groups);
+        const saved = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(saved.sidebarGroups, groups);
+        yield* service.updateSettings({ sidebarGroups: [] });
+        assert.deepEqual((yield* service.getSettings).sidebarGroups, []);
+        const cleared = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(cleared.sidebarGroups, []);
+      }),
+    ).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("persists and broadcasts model preferences to other connected clients", () =>
     Effect.scoped(
       Effect.gen(function* () {

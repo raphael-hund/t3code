@@ -179,8 +179,20 @@ function buildActiveShellSnapshot(input: {
 
 type ShellTrimRow = Pick<
   OrchestrationV2ThreadShell,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt"
-> & { readonly hasRemoteTasks?: boolean };
+  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "updatedAt"
+> & {
+  readonly hasRemoteTasks?: boolean;
+  /** Shells carry the config; the store's index only whether one is set. */
+  readonly orchestratorProject?: OrchestrationV2ThreadShell["orchestratorProject"];
+  readonly isOrchestratorProject?: boolean;
+};
+
+function isProjectRootRow(row: ShellTrimRow): boolean {
+  return (
+    isListedThreadLineage(row.lineage) &&
+    (row.isOrchestratorProject === true || row.orchestratorProject != null)
+  );
+}
 
 /**
  * What a subscriber's trims read across every active row. Computed from full shells or from the
@@ -197,6 +209,63 @@ interface ShellTrimFacts {
 }
 
 const NEWEST_SETTLED_KEPT = 25;
+const NEWEST_IDLE_PROJECT_SUBAGENTS_KEPT = 5;
+
+/**
+ * The newest idle subagents of each parent in a Project's tree, newest first by `updatedAt`, so a
+ * Project's dropdown shows recent finished work without a family read. Live children are kept by
+ * the idle trim already; `isLive` may over-report, which only widens the rows read.
+ */
+function newestIdleProjectSubagentIds<Row extends ShellTrimRow>(
+  rows: ReadonlyArray<Row>,
+  isLive: (row: Row) => boolean,
+): ReadonlySet<string> {
+  const kept = new Set<string>();
+  if (!rows.some(isProjectRootRow)) return kept;
+  const byId = new Map(rows.map((row) => [row.id as string, row] as const));
+  // Walks parents, not `rootThreadId`: a fork keeps its source's root, so a forked Project's
+  // children name the source as their root.
+  const inProject = new Map<string, boolean>();
+  const isInProject = (row: Row): boolean => {
+    const known = inProject.get(row.id);
+    if (known !== undefined) return known;
+    inProject.set(row.id, false);
+    const parent =
+      row.lineage.parentThreadId === null ? undefined : byId.get(row.lineage.parentThreadId);
+    const result =
+      row.lineage.relationshipToParent === "subagent"
+        ? parent !== undefined && isInProject(parent)
+        : isProjectRootRow(row);
+    inProject.set(row.id, result);
+    return result;
+  };
+  const idleByParent = new Map<string, Array<Row>>();
+  for (const row of rows) {
+    const parentId = row.lineage.parentThreadId;
+    if (
+      row.lineage.relationshipToParent !== "subagent" ||
+      parentId === null ||
+      !isInProject(row) ||
+      isLive(row)
+    ) {
+      continue;
+    }
+    const siblings = idleByParent.get(parentId);
+    if (siblings === undefined) idleByParent.set(parentId, [row]);
+    else siblings.push(row);
+  }
+  for (const siblings of idleByParent.values()) {
+    siblings
+      .toSorted(
+        (left, right) =>
+          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
+          left.id.localeCompare(right.id),
+      )
+      .slice(0, NEWEST_IDLE_PROJECT_SUBAGENTS_KEPT)
+      .forEach((row) => kept.add(row.id));
+  }
+  return kept;
+}
 
 function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
   const subagentParentIds = new Set<string>();
@@ -252,12 +321,15 @@ function omitIdleSubagentShellsWith(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
   facts: Pick<ShellTrimFacts, "subagentParentIds" | "remoteTaskParentIds">,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
+  // From the shells, whose liveness is exact: the index read only a superset of these.
+  const newestProjectSubagentIds = newestIdleProjectSubagentIds(threads, isLiveSubagentShell);
   return threads.filter(
     (thread) =>
       thread.lineage.relationshipToParent !== "subagent" ||
       isLiveSubagentShell(thread) ||
       facts.subagentParentIds.has(thread.id) ||
-      facts.remoteTaskParentIds.has(thread.id),
+      facts.remoteTaskParentIds.has(thread.id) ||
+      newestProjectSubagentIds.has(thread.id),
   );
 }
 
@@ -284,6 +356,7 @@ function omitOlderSettledShellsWith(
       thread.pinnedAt != null ||
       (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs) ||
       isLiveSubagentShell(thread) ||
+      thread.orchestratorProject != null ||
       ancestorIds.has(thread.id) ||
       facts.remoteTaskParentIds.has(thread.id),
   );
@@ -297,12 +370,7 @@ function omitOlderSettledShellsWith(
   };
 }
 
-/**
- * Idle subagent children have no sidebar row, so clients that opt in read them from their thread
- * family instead. A child stays while it is live or the parent of another child, so the request
- * and working walks over shell rows never meet a gap in a nested chain. It also stays as the
- * parent of a task in a linked environment, whose clients nest that task under it.
- */
+/** Keeps live children, required parents, and each Project parent's five newest idle children. */
 export function omitIdleSubagentShells(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
@@ -327,12 +395,7 @@ export function activeShellRowsForSubscriber(
   };
 }
 
-/**
- * Opted-in snapshots keep the 25 newest settled top-level threads (and ties) and count the rest per
- * project in `olderSettled`; clients page them with `getOlderSettledThreads`. Older rows stay while
- * pinned, snoozed, live, above a kept subagent or side chat, or the parent of a task in a linked
- * environment, so walks over shell rows and other environments' tasks still find them.
- */
+/** Keeps the 25 newest settled threads and rows needed for projects or active descendants. */
 export function omitOlderSettledShells(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly snapshotSequence: number;
@@ -374,13 +437,15 @@ function shellSubscriberThreadIds(
   options: ShellSubscriberOptions,
 ): ReadonlyArray<ThreadId> {
   const facts = shellTrimFacts(index);
+  const newestProjectSubagentIds = newestIdleProjectSubagentIds(index, (entry) => entry.mayBeLive);
   const subagents = index.filter(
     (entry) =>
       entry.lineage.relationshipToParent === "subagent" &&
       (!options.omitIdleSubagents ||
         entry.mayBeLive ||
         entry.hasRemoteTasks ||
-        facts.subagentParentIds.has(entry.id)),
+        facts.subagentParentIds.has(entry.id) ||
+        newestProjectSubagentIds.has(entry.id)),
   );
   const ancestorIds = hiddenChildAncestorIds([
     ...subagents,
@@ -399,6 +464,7 @@ function shellSubscriberThreadIds(
           entry.pinnedAt != null ||
           entry.snoozedUntil != null ||
           entry.mayBeLive ||
+          entry.isOrchestratorProject ||
           entry.hasRemoteTasks ||
           ancestorIds.has(entry.id)
         ? [entry.id]
